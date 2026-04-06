@@ -15,7 +15,7 @@ AI 에이전트와 나눈 모든 대화를 검색하세요.
 
 <br/>
 
-**`English`** · [**`한국어`**](#한국어)
+**`English`** · [**`한국어`**](#ko)
 
 </div>
 
@@ -324,11 +324,12 @@ This project was developed using AI coding agents (Claude Code, Codex) orchestra
 
 ---
 
-<a id="한국어"></a>
+<a id="ko"></a>
 
 <div align="center">
 
 [**`English`**](#secall) · **`한국어`**
+
 
 </div>
 
