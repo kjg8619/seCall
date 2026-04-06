@@ -41,6 +41,10 @@ enum Commands {
         /// Filter by project directory
         #[arg(long)]
         cwd: Option<PathBuf>,
+
+        /// Skip sessions with fewer turns than this (0 = no filter)
+        #[arg(long, default_value = "0")]
+        min_turns: usize,
     },
 
     /// Search session history
@@ -95,6 +99,10 @@ enum Commands {
         /// Re-embed all sessions
         #[arg(long)]
         all: bool,
+
+        /// Embedding batch size (default: 32)
+        #[arg(long)]
+        batch_size: Option<usize>,
     },
 
     /// Verify index and vault integrity
@@ -130,6 +138,10 @@ enum Commands {
         /// Dry run — show what would happen without executing
         #[arg(long)]
         dry_run: bool,
+
+        /// Skip incremental wiki generation for new sessions
+        #[arg(long)]
+        no_wiki: bool,
     },
 
     /// Rebuild DB index from vault markdown files
@@ -204,8 +216,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Init { vault, git } => {
             commands::init::run(vault, git)?;
         }
-        Commands::Ingest { path, auto, cwd } => {
-            commands::ingest::run(path, auto, cwd, &cli.format).await?;
+        Commands::Ingest { path, auto, cwd, min_turns } => {
+            commands::ingest::run(path, auto, cwd, min_turns, &cli.format).await?;
         }
         Commands::Recall {
             query,
@@ -236,8 +248,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Status => {
             commands::status::run()?;
         }
-        Commands::Embed { all } => {
-            commands::embed::run(all).await?;
+        Commands::Embed { all, batch_size } => {
+            commands::embed::run(all, batch_size).await?;
         }
         Commands::Lint { json, errors_only } => {
             commands::lint::run(json, errors_only)?;
@@ -262,8 +274,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Sync {
             local_only,
             dry_run,
+            no_wiki,
         } => {
-            commands::sync::run(local_only, dry_run).await?;
+            commands::sync::run(local_only, dry_run, no_wiki).await?;
         }
         Commands::Reindex { from_vault } => {
             commands::reindex::run(from_vault)?;

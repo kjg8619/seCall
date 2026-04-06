@@ -18,16 +18,38 @@ use secall_core::{
 
 use crate::output::{print_ingest_result, OutputFormat};
 
+#[derive(Debug, serde::Serialize)]
+pub struct IngestError {
+    pub path: String,
+    pub session_id: Option<String>,
+    pub phase: IngestPhase,
+    pub message: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IngestPhase {
+    Detection,
+    Parsing,
+    DuplicateCheck,
+    VaultWrite,
+    Indexing,
+}
+
 pub struct IngestStats {
     pub ingested: usize,
     pub skipped: usize,
     pub errors: usize,
+    pub skipped_min_turns: usize,
+    pub new_session_ids: Vec<String>,
+    pub error_details: Vec<IngestError>,
 }
 
 pub async fn run(
     path: Option<String>,
     auto: bool,
     cwd: Option<PathBuf>,
+    min_turns: usize,
     format: &OutputFormat,
 ) -> Result<()> {
     let config = Config::load_or_default();
@@ -50,13 +72,48 @@ pub async fn run(
         return Ok(());
     }
 
-    let stats = ingest_sessions(&config, &db, paths, &engine, &vault, format).await?;
+    let stats = ingest_sessions(&config, &db, paths, &engine, &vault, min_turns, format).await?;
 
-    if stats.ingested > 0 || stats.skipped > 0 || stats.errors > 0 {
-        eprintln!(
-            "\nSummary: {} ingested, {} skipped (duplicate), {} errors",
-            stats.ingested, stats.skipped, stats.errors
-        );
+    match format {
+        OutputFormat::Text => {
+            if stats.ingested > 0
+                || stats.skipped > 0
+                || stats.errors > 0
+                || stats.skipped_min_turns > 0
+            {
+                eprintln!(
+                    "\nSummary: {} ingested, {} skipped (duplicate), {} errors",
+                    stats.ingested, stats.skipped, stats.errors
+                );
+                if stats.skipped_min_turns > 0 {
+                    eprintln!("         {} skipped (too few turns)", stats.skipped_min_turns);
+                }
+                if !stats.error_details.is_empty() {
+                    eprintln!("\nErrors:");
+                    for err in &stats.error_details {
+                        let phase = format!("{:?}", err.phase);
+                        let loc = err.session_id.as_deref().unwrap_or(&err.path);
+                        eprintln!("  [{phase}] {loc} — {}", err.message);
+                    }
+                }
+            }
+        }
+        OutputFormat::Json => {
+            let summary = serde_json::json!({
+                "summary": {
+                    "ingested": stats.ingested,
+                    "skipped": stats.skipped,
+                    "errors": stats.errors,
+                    "skipped_min_turns": stats.skipped_min_turns,
+                },
+                "errors": stats.error_details,
+            });
+            println!("{}", serde_json::to_string_pretty(&summary).unwrap_or_default());
+        }
+    }
+
+    if stats.ingested == 0 && stats.errors > 0 {
+        return Err(anyhow!("all sessions failed"));
     }
 
     Ok(())
@@ -69,11 +126,15 @@ pub async fn ingest_sessions(
     paths: Vec<PathBuf>,
     engine: &SearchEngine,
     vault: &Vault,
+    min_turns: usize,
     format: &OutputFormat,
 ) -> Result<IngestStats> {
     let mut ingested = 0usize;
     let mut skipped = 0usize;
     let mut errors = 0usize;
+    let mut skipped_min_turns = 0usize;
+    let mut new_session_ids: Vec<String> = Vec::new();
+    let mut error_details: Vec<IngestError> = Vec::new();
 
     // BM25/vault 완료 후 벡터 임베딩을 일괄 처리하기 위한 수집 목록.
     let mut vector_tasks: Vec<secall_core::ingest::Session> = Vec::new();
@@ -84,6 +145,12 @@ pub async fn ingest_sessions(
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!(path = %session_path.display(), error = %e, "failed to detect session format");
+                error_details.push(IngestError {
+                    path: session_path.display().to_string(),
+                    session_id: None,
+                    phase: IngestPhase::Detection,
+                    message: e.to_string(),
+                });
                 errors += 1;
                 continue;
             }
@@ -107,15 +174,25 @@ pub async fn ingest_sessions(
                             vault,
                             session,
                             format,
+                            min_turns,
                             &mut ingested,
                             &mut skipped,
                             &mut errors,
+                            &mut skipped_min_turns,
+                            &mut new_session_ids,
                             &mut vector_tasks,
+                            &mut error_details,
                         );
                     }
                 }
                 Err(e) => {
                     tracing::warn!(path = %session_path.display(), error = %e, "failed to parse multi-session file");
+                    error_details.push(IngestError {
+                        path: session_path.display().to_string(),
+                        session_id: None,
+                        phase: IngestPhase::Parsing,
+                        message: e.to_string(),
+                    });
                     errors += 1;
                 }
             }
@@ -136,6 +213,12 @@ pub async fn ingest_sessions(
             Ok(false) => {}
             Err(e) => {
                 tracing::warn!(path = %session_path.display(), error = %e, "DB check failed, skipping");
+                error_details.push(IngestError {
+                    path: session_path.display().to_string(),
+                    session_id: None,
+                    phase: IngestPhase::DuplicateCheck,
+                    message: e.to_string(),
+                });
                 errors += 1;
                 continue;
             }
@@ -150,14 +233,24 @@ pub async fn ingest_sessions(
                     vault,
                     session,
                     format,
+                    min_turns,
                     &mut ingested,
                     &mut skipped,
                     &mut errors,
+                    &mut skipped_min_turns,
+                    &mut new_session_ids,
                     &mut vector_tasks,
+                    &mut error_details,
                 );
             }
             Err(e) => {
                 tracing::warn!(path = %session_path.display(), error = %e, "failed to parse session file");
+                error_details.push(IngestError {
+                    path: session_path.display().to_string(),
+                    session_id: None,
+                    phase: IngestPhase::Parsing,
+                    message: e.to_string(),
+                });
                 errors += 1;
             }
         }
@@ -169,6 +262,13 @@ pub async fn ingest_sessions(
         for session in &vector_tasks {
             if let Err(e) = engine.index_session_vectors(db, session).await {
                 tracing::warn!(session = &session.id[..8.min(session.id.len())], error = %e, "vector embedding failed");
+                error_details.push(IngestError {
+                    path: String::new(),
+                    session_id: Some(session.id.clone()),
+                    phase: IngestPhase::Indexing,
+                    message: e.to_string(),
+                });
+                errors += 1;
             }
         }
     }
@@ -177,6 +277,9 @@ pub async fn ingest_sessions(
         ingested,
         skipped,
         errors,
+        skipped_min_turns,
+        new_session_ids,
+        error_details,
     })
 }
 
@@ -189,11 +292,21 @@ fn ingest_single_session(
     vault: &Vault,
     session: secall_core::ingest::Session,
     format: &OutputFormat,
+    min_turns: usize,
     ingested: &mut usize,
     skipped: &mut usize,
     errors: &mut usize,
+    skipped_min_turns: &mut usize,
+    new_session_ids: &mut Vec<String>,
     vector_tasks: &mut Vec<secall_core::ingest::Session>,
+    error_details: &mut Vec<IngestError>,
 ) {
+    // 턴 수 필터 — min_turns > 0 이면 짧은 세션 skip
+    if min_turns > 0 && session.turns.len() < min_turns {
+        *skipped_min_turns += 1;
+        return;
+    }
+
     // 실제 session.id 기준 중복 체크
     match db.session_exists(&session.id) {
         Ok(true) => {
@@ -203,6 +316,12 @@ fn ingest_single_session(
         Ok(false) => {}
         Err(e) => {
             tracing::warn!(session = &session.id, error = %e, "DB check failed, skipping");
+            error_details.push(IngestError {
+                path: String::new(),
+                session_id: Some(session.id.clone()),
+                phase: IngestPhase::DuplicateCheck,
+                message: e.to_string(),
+            });
             *errors += 1;
             return;
         }
@@ -213,6 +332,12 @@ fn ingest_single_session(
         Ok(p) => p,
         Err(e) => {
             tracing::warn!(session = &session.id, error = %e, "vault write failed");
+            error_details.push(IngestError {
+                path: String::new(),
+                session_id: Some(session.id.clone()),
+                phase: IngestPhase::VaultWrite,
+                message: e.to_string(),
+            });
             *errors += 1;
             return;
         }
@@ -234,6 +359,12 @@ fn ingest_single_session(
             if let Err(rm_err) = std::fs::remove_file(config.vault.path.join(&rel_path)) {
                 tracing::warn!(error = %rm_err, "failed to cleanup vault file");
             }
+            error_details.push(IngestError {
+                path: String::new(),
+                session_id: Some(session.id.clone()),
+                phase: IngestPhase::Indexing,
+                message: e.to_string(),
+            });
             *errors += 1;
             return;
         }
@@ -242,6 +373,7 @@ fn ingest_single_session(
     let abs_path = config.vault.path.join(&rel_path);
     print_ingest_result(&session, &abs_path, &index_stats, format);
     *ingested += 1;
+    new_session_ids.push(session.id.clone());
 
     if let Err(e) = run_post_ingest_hook(config, &session, &abs_path) {
         tracing::warn!(session = &session.id[..8.min(session.id.len())], error = %e, "post-ingest hook failed");
@@ -271,8 +403,11 @@ fn collect_paths(path: Option<&str>, auto: bool, cwd: Option<&Path>) -> Result<V
             paths.extend(find_codex_sessions(Some(&pb))?);
             paths.extend(find_gemini_sessions(Some(&pb))?);
             Ok(paths)
+        } else if pb.is_absolute() || p.contains('/') || pb.extension().is_some() {
+            // 경로 구문을 가지지만 존재하지 않는 경우 → 그대로 전달해 Detection 단계에서 에러 리포트 생성
+            Ok(vec![pb])
         } else {
-            // Treat as session ID — search in ~/.claude/projects/
+            // 확장자/슬래시 없는 짧은 문자열 → 세션 ID로 조회
             find_session_by_id(p)
         }
     } else {

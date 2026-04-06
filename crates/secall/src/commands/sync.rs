@@ -9,8 +9,9 @@ use secall_core::{
 use crate::output::OutputFormat;
 
 use super::ingest::{ingest_sessions, IngestStats};
+use super::wiki;
 
-pub async fn run(local_only: bool, dry_run: bool) -> Result<()> {
+pub async fn run(local_only: bool, dry_run: bool, no_wiki: bool) -> Result<()> {
     let config = Config::load_or_default();
     let vault_git = VaultGit::new(&config.vault.path);
 
@@ -82,6 +83,25 @@ pub async fn run(local_only: bool, dry_run: bool) -> Result<()> {
             ingest_result.ingested, ingest_result.skipped, ingest_result.errors
         );
 
+        // === Phase 3.5: Incremental wiki (새 세션 → wiki 갱신) ===
+        if !no_wiki && !ingest_result.new_session_ids.is_empty() {
+            if !wiki::command_exists("claude") {
+                eprintln!("  ⚠ Claude CLI not found, skipping wiki update.");
+            } else {
+                let count = ingest_result.new_session_ids.len();
+                if count > 10 {
+                    eprintln!("  ⚠ {} new sessions — consider running `secall wiki update` in batch mode for efficiency.", count);
+                }
+                eprintln!("Updating wiki for {} new session(s)...", count);
+                for sid in &ingest_result.new_session_ids {
+                    match wiki::run_update("sonnet", None, Some(sid.as_str()), false).await {
+                        Ok(()) => eprintln!("  ✓ wiki updated for {}", &sid[..sid.len().min(8)]),
+                        Err(e) => eprintln!("  ⚠ wiki failed for {}: {e}", &sid[..sid.len().min(8)]),
+                    }
+                }
+            }
+        }
+
         // === Phase 4: Push (로컬 세션 공유) ===
         if !local_only && vault_git.is_git_repo() {
             eprintln!("Pushing to remote...");
@@ -110,9 +130,15 @@ pub async fn run(local_only: bool, dry_run: bool) -> Result<()> {
     if dry_run {
         if !local_only && vault_git.is_git_repo() {
             eprintln!("[DRY RUN] Phase 3: Would ingest local sessions into vault");
+            if !no_wiki {
+                eprintln!("[DRY RUN] Phase 3.5: Would update wiki for new sessions (skip with --no-wiki)");
+            }
             eprintln!("[DRY RUN] Phase 4: Would push vault changes to remote (git push origin main)");
         } else {
             eprintln!("[DRY RUN] Phase 3: Would ingest local sessions into vault");
+            if !no_wiki {
+                eprintln!("[DRY RUN] Phase 3.5: Would update wiki for new sessions (skip with --no-wiki)");
+            }
         }
         eprintln!("\n[DRY RUN] Sync preview complete. No changes made.");
     } else {
@@ -214,11 +240,14 @@ async fn run_auto_ingest(config: &Config, db: &Database) -> Result<IngestStats> 
             ingested: 0,
             skipped: 0,
             errors: 0,
+            skipped_min_turns: 0,
+            new_session_ids: Vec::new(),
+            error_details: Vec::new(),
         });
     }
 
     let vault = Vault::new(config.vault.path.clone());
     vault.init()?;
 
-    ingest_sessions(config, db, paths, &engine, &vault, &OutputFormat::Text).await
+    ingest_sessions(config, db, paths, &engine, &vault, 0, &OutputFormat::Text).await
 }

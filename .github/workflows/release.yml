@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-13
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }} -p secall
+      - run: |
+          cd target/${{ matrix.target }}/release
+          tar czf secall-${{ matrix.target }}.tar.gz secall
+          mv secall-${{ matrix.target }}.tar.gz ${{ github.workspace }}/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: secall-${{ matrix.target }}
+          path: secall-${{ matrix.target }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            secall-aarch64-apple-darwin/secall-aarch64-apple-darwin.tar.gz
+            secall-x86_64-apple-darwin/secall-x86_64-apple-darwin.tar.gz
+          generate_release_notes: true

@@ -43,3 +43,13 @@ pub struct GetParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct StatusParams {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WikiSearchParams {
+    /// Search query matched against wiki filename and content
+    pub query: String,
+    /// Filter by wiki category: projects, topics, decisions (optional)
+    pub category: Option<String>,
+    /// Max results (default 5)
+    pub limit: Option<usize>,
+}

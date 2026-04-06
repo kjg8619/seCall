@@ -387,6 +387,119 @@ impl Database {
         Ok(())
     }
 
+    /// session_id로 Session 구조체를 재구성 (벡터 임베딩용).
+    /// turns 테이블에서 content를 읽어 Session.turns를 채운다.
+    pub fn get_session_for_embedding(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::ingest::Session> {
+        use crate::ingest::{AgentKind, Role, Session, TokenUsage, Turn};
+        use chrono::DateTime;
+
+        // 세션 메타 조회
+        let (agent_str, model, project, cwd_str, start_time_str, end_time_str, tokens_in, tokens_out) = self
+            .conn
+            .query_row(
+                "SELECT agent, model, project, cwd, start_time, end_time, tokens_in, tokens_out
+                 FROM sessions WHERE id = ?1",
+                [session_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, i64>(7)?,
+                    ))
+                },
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    SecallError::SessionNotFound(session_id.to_string())
+                }
+                _ => SecallError::Database(e),
+            })?;
+
+        let agent = match agent_str.as_str() {
+            "claude-ai" => AgentKind::ClaudeAi,
+            "codex" => AgentKind::Codex,
+            "gemini-cli" => AgentKind::GeminiCli,
+            _ => AgentKind::ClaudeCode,
+        };
+
+        let start_time = DateTime::parse_from_rfc3339(&start_time_str)
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+            .unwrap_or_else(|_| chrono::Utc::now());
+
+        let end_time = end_time_str.and_then(|s| {
+            DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .ok()
+        });
+
+        let cwd = cwd_str.map(std::path::PathBuf::from);
+
+        // turns 조회
+        let mut stmt = self.conn.prepare(
+            "SELECT turn_index, role, content, timestamp FROM turns
+             WHERE session_id = ?1 ORDER BY turn_index ASC",
+        )?;
+        let turns: Vec<Turn> = stmt
+            .query_map([session_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .map(|(idx, role_str, content, ts_str)| {
+                let role = match role_str.as_str() {
+                    "assistant" => Role::Assistant,
+                    "system" => Role::System,
+                    _ => Role::User,
+                };
+                let timestamp = ts_str.and_then(|s| {
+                    DateTime::parse_from_rfc3339(&s)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .ok()
+                });
+                Turn {
+                    index: idx as u32,
+                    role,
+                    timestamp,
+                    content,
+                    actions: Vec::new(),
+                    tokens: None,
+                    thinking: None,
+                    is_sidechain: false,
+                }
+            })
+            .collect();
+
+        Ok(Session {
+            id: session_id.to_string(),
+            agent,
+            model,
+            project,
+            cwd,
+            git_branch: None,
+            host: None,
+            start_time,
+            end_time,
+            turns,
+            total_tokens: TokenUsage {
+                input: tokens_in as u64,
+                output: tokens_out as u64,
+                cached: 0,
+            },
+        })
+    }
+
     /// 캐시에서 확장된 쿼리 조회. TTL 7일 초과 시 None.
     pub fn get_query_cache(&self, query: &str) -> Option<String> {
         let hash = Self::query_hash(query);

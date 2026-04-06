@@ -49,7 +49,7 @@ pub async fn run_update(
     let mut child = std::process::Command::new("claude")
         .args(["-p", "--model", model_id])
         .arg("--allowedTools")
-        .arg("mcp__secall__recall,mcp__secall__get,mcp__secall__status,Read,Write,Edit,Glob,Grep")
+        .arg("mcp__secall__recall,mcp__secall__get,mcp__secall__status,mcp__secall__wiki_search,Read,Write,Edit,Glob,Grep")
         .stdin(Stdio::piped())
         .current_dir(&config.vault.path)
         .spawn()?;
@@ -144,7 +144,7 @@ fn prompt_dir() -> PathBuf {
         .join("prompts")
 }
 
-fn command_exists(cmd: &str) -> bool {
+pub fn command_exists(cmd: &str) -> bool {
     std::process::Command::new("which")
         .arg(cmd)
         .output()

@@ -109,7 +109,7 @@ secall mcp
 secall mcp --http 127.0.0.1:8080
 ```
 
-Tools provided: `recall`, `get`, `status` — letting your AI agent search its own conversation history.
+Tools provided: `recall`, `get`, `status`, `wiki_search` — letting your AI agent search its own conversation history and wiki knowledge pages.
 
 ### Data Integrity
 
@@ -263,13 +263,13 @@ secall wiki status
 | Command | Description |
 |---|---|
 | `secall init [--git <remote>]` | Initialize vault, config, and database |
-| `secall ingest [path] --auto` | Parse and index agent sessions |
-| `secall sync [--local-only]` | Full sync: git pull → reindex → ingest → git push |
+| `secall ingest [path] --auto [--min-turns N]` | Parse and index agent sessions |
+| `secall sync [--local-only] [--no-wiki]` | Full sync: git pull → reindex → ingest → wiki → git push |
 | `secall reindex --from-vault` | Rebuild DB from vault markdown files |
 | `secall recall <query>` | Hybrid search across sessions |
 | `secall get <id>` | Retrieve session details |
 | `secall status` | Show index statistics |
-| `secall embed` | Generate vector embeddings |
+| `secall embed [--all]` | Generate vector embeddings for un-embedded sessions |
 | `secall lint` | Verify index/vault integrity |
 | `secall mcp` | Start MCP server |
 | `secall model download` | Download BGE-M3 ONNX model |
@@ -420,7 +420,7 @@ secall mcp
 secall mcp --http 127.0.0.1:8080
 ```
 
-제공 도구: `recall`, `get`, `status` — AI 에이전트가 자신의 대화 이력을 검색할 수 있습니다.
+제공 도구: `recall`, `get`, `status`, `wiki_search` — AI 에이전트가 자신의 대화 이력과 위키 지식을 검색할 수 있습니다.
 
 ### 데이터 무결성
 

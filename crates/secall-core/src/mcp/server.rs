@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use rmcp::{
@@ -7,7 +8,7 @@ use rmcp::{
 };
 
 use super::instructions::build_instructions;
-use super::tools::{GetParams, QueryType, RecallParams, StatusParams};
+use super::tools::{GetParams, QueryType, RecallParams, StatusParams, WikiSearchParams};
 use crate::error::SecallError;
 use crate::search::bm25::{SearchFilters, SearchResult};
 use crate::search::hybrid::{parse_temporal_filter, SearchEngine};
@@ -32,15 +33,17 @@ pub struct SeCallMcpServer {
     tool_router: ToolRouter<Self>,
     db: Arc<Mutex<Database>>,
     search: Arc<SearchEngine>,
+    vault_path: PathBuf,
 }
 
 #[tool_router]
 impl SeCallMcpServer {
-    pub fn new(db: Arc<Mutex<Database>>, search: Arc<SearchEngine>) -> Self {
+    pub fn new(db: Arc<Mutex<Database>>, search: Arc<SearchEngine>, vault_path: PathBuf) -> Self {
         Self {
             tool_router: Self::tool_router(),
             db,
             search,
+            vault_path,
         }
     }
 
@@ -228,6 +231,130 @@ impl SeCallMcpServer {
             Err(e) => format!("error: {e}"),
         }
     }
+
+    /// Search wiki knowledge pages
+    #[tool(
+        description = "Search wiki knowledge pages. Returns matching wiki articles from projects, topics, and decisions."
+    )]
+    fn wiki_search(
+        &self,
+        Parameters(params): Parameters<WikiSearchParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let wiki_dir = self.vault_path.join("wiki");
+        let limit = params.limit.unwrap_or(5);
+        let query_lower = params.query.to_lowercase();
+
+        if !wiki_dir.exists() {
+            let json = serde_json::json!({ "results": [], "count": 0 });
+            return Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&json).unwrap_or_default(),
+            )]));
+        }
+
+        // wiki/ 하위 MD 파일 수집 (category 필터 적용)
+        // category는 허용 목록으로 검증 — 임의 경로 탐색 방지
+        let search_root = if let Some(ref cat) = params.category {
+            match cat.as_str() {
+                "projects" | "topics" | "decisions" => wiki_dir.join(cat),
+                _ => {
+                    return Err(McpError::invalid_params(
+                        format!(
+                            "invalid category '{}': must be one of projects, topics, decisions",
+                            cat
+                        ),
+                        None,
+                    ));
+                }
+            }
+        } else {
+            wiki_dir.clone()
+        };
+
+        if !search_root.exists() {
+            let json = serde_json::json!({ "results": [], "count": 0 });
+            return Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&json).unwrap_or_default(),
+            )]));
+        }
+
+        struct Match {
+            path: String,
+            title: String,
+            preview: String,
+            name_match: bool,
+        }
+
+        let mut matches: Vec<Match> = walkdir::WalkDir::new(&search_root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map(|x| x == "md").unwrap_or(false))
+            .filter_map(|entry| {
+                let path = entry.path();
+                let filename = path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_lowercase();
+                let content = std::fs::read_to_string(path).ok()?;
+                let content_lower = content.to_lowercase();
+
+                let name_match = filename.contains(&query_lower);
+                let body_match = content_lower.contains(&query_lower);
+
+                if !name_match && !body_match {
+                    return None;
+                }
+
+                let rel = path
+                    .strip_prefix(&self.vault_path)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .to_string();
+
+                // title: 첫 번째 # 헤더 or 파일명
+                let title = content
+                    .lines()
+                    .find(|l| l.starts_with("# "))
+                    .map(|l| l.trim_start_matches("# ").to_string())
+                    .unwrap_or_else(|| {
+                        path.file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string()
+                    });
+
+                let preview: String = content.chars().take(500).collect();
+
+                Some(Match {
+                    path: rel,
+                    title,
+                    preview,
+                    name_match,
+                })
+            })
+            .collect();
+
+        // 파일명 매칭을 우선 정렬
+        matches.sort_by_key(|m| !m.name_match);
+        matches.truncate(limit);
+
+        let results: Vec<serde_json::Value> = matches
+            .into_iter()
+            .map(|m| {
+                serde_json::json!({
+                    "path": m.path,
+                    "title": m.title,
+                    "preview": m.preview,
+                })
+            })
+            .collect();
+
+        let count = results.len();
+        let json = serde_json::json!({ "results": results, "count": count });
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json).unwrap_or_default(),
+        )]))
+    }
 }
 
 #[tool_handler]
@@ -244,8 +371,12 @@ impl ServerHandler for SeCallMcpServer {
     }
 }
 
-pub async fn start_mcp_server(db: Database, search: SearchEngine) -> anyhow::Result<()> {
-    let server = SeCallMcpServer::new(Arc::new(Mutex::new(db)), Arc::new(search));
+pub async fn start_mcp_server(
+    db: Database,
+    search: SearchEngine,
+    vault_path: PathBuf,
+) -> anyhow::Result<()> {
+    let server = SeCallMcpServer::new(Arc::new(Mutex::new(db)), Arc::new(search), vault_path);
     let (stdin, stdout) = rmcp::transport::io::stdio();
     let service = server.serve((stdin, stdout)).await?;
     service.waiting().await?;
@@ -256,6 +387,7 @@ pub async fn start_mcp_server(db: Database, search: SearchEngine) -> anyhow::Res
 pub async fn start_mcp_http_server(
     db: Database,
     search: SearchEngine,
+    vault_path: PathBuf,
     bind_addr: &str,
 ) -> anyhow::Result<()> {
     use rmcp::transport::streamable_http_server::{
@@ -264,11 +396,16 @@ pub async fn start_mcp_http_server(
 
     let db_arc = Arc::new(Mutex::new(db));
     let search_arc = Arc::new(search);
+    let vault_path_arc = Arc::new(vault_path);
 
     let service: StreamableHttpService<SeCallMcpServer, LocalSessionManager> =
         StreamableHttpService::new(
             move || -> Result<SeCallMcpServer, std::io::Error> {
-                Ok(SeCallMcpServer::new(db_arc.clone(), search_arc.clone()))
+                Ok(SeCallMcpServer::new(
+                    db_arc.clone(),
+                    search_arc.clone(),
+                    (*vault_path_arc).clone(),
+                ))
             },
             Arc::new(LocalSessionManager::default()),
             StreamableHttpServerConfig::default(),
@@ -314,7 +451,11 @@ mod tests {
         let db = Database::open_memory().unwrap();
         let tok = LinderaKoTokenizer::new().unwrap();
         let engine = SearchEngine::new(Bm25Indexer::new(Box::new(tok)), None);
-        SeCallMcpServer::new(Arc::new(Mutex::new(db)), Arc::new(engine))
+        SeCallMcpServer::new(
+            Arc::new(Mutex::new(db)),
+            Arc::new(engine),
+            std::path::PathBuf::from("/tmp/secall-test-vault"),
+        )
     }
 
     #[test]

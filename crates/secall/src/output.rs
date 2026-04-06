@@ -72,29 +72,9 @@ pub fn print_ingest_result(
             }
         }
         OutputFormat::Json => {
-            let event = serde_json::json!({
-                "event": "ingest_complete",
-                "session_id": session.id,
-                "agent": session.agent.as_str(),
-                "project": session.project,
-                "date": session.start_time.format("%Y-%m-%d").to_string(),
-                "vault_path": vault_path.to_string_lossy(),
-                "turns": session.turns.len(),
-                "tokens": {
-                    "input": session.total_tokens.input,
-                    "output": session.total_tokens.output
-                },
-                "index": {
-                    "bm25_indexed": stats.turns_indexed > 0,
-                    "vector_indexed": stats.chunks_embedded > 0,
-                    "chunks_embedded": stats.chunks_embedded
-                },
-                "timestamp": chrono::Utc::now().to_rfc3339()
-            });
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&event).unwrap_or_default()
-            );
+            // JSON 모드에서는 세션별 이벤트를 출력하지 않음.
+            // run()에서 단일 summary JSON을 출력하여 top-level JSON 문서가 하나만 나오도록 함.
+            let _ = (session, vault_path, stats);
         }
     }
 }

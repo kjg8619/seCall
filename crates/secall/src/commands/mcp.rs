@@ -20,8 +20,9 @@ pub async fn run(http: Option<String>) -> Result<()> {
     let vector = create_vector_indexer(&config).await;
     let search = SearchEngine::new(bm25, vector);
 
+    let vault_path = config.vault.path.clone();
     match http {
-        Some(addr) => start_mcp_http_server(db, search, &addr).await,
-        None => start_mcp_server(db, search).await,
+        Some(addr) => start_mcp_http_server(db, search, vault_path, &addr).await,
+        None => start_mcp_server(db, search, vault_path).await,
     }
 }

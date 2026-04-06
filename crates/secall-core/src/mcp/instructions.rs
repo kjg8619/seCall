@@ -21,11 +21,18 @@ Vector search: {vector_status}
 - Use `get` with session_id:N to read a specific turn
 - Filter by project or agent when searching across many sessions
 
+## Tools
+- `recall` — search session turns (keyword / semantic / temporal)
+- `get` — retrieve a specific session or turn by ID
+- `status` — show index health
+- `wiki_search` — search wiki knowledge pages by query; optional `category` filter (projects/topics/decisions)
+
 ## Example Queries
 - Keyword: {{"queries": [{{"type": "keyword", "query": "SQLite FTS5"}}]}}
 - Semantic: {{"queries": [{{"type": "semantic", "query": "how to design database schema"}}]}}
 - Combined: {{"queries": [{{"type": "keyword", "query": "kiwi-rs"}}, {{"type": "semantic", "query": "Korean tokenizer comparison"}}]}}
 - Temporal: {{"queries": [{{"type": "temporal", "query": "yesterday"}}, {{"type": "keyword", "query": "bugfix"}}]}}
+- Wiki: {{"query": "tunadish", "category": "projects", "limit": 3}}
 "#,
         session_count = session_count,
         project_count = projects.len(),
