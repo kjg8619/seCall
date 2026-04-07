@@ -36,10 +36,7 @@ pub enum SecallError {
     SessionNotFound(String),
 
     #[error("turn not found: session={session_id} turn={turn_index}")]
-    TurnNotFound {
-        session_id: String,
-        turn_index: u32,
-    },
+    TurnNotFound { session_id: String, turn_index: u32 },
 
     // --- Config ---
     #[error("config error: {0}")]

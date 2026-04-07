@@ -86,7 +86,10 @@ pub async fn run(
                     stats.ingested, stats.skipped, stats.errors
                 );
                 if stats.skipped_min_turns > 0 {
-                    eprintln!("         {} skipped (too few turns)", stats.skipped_min_turns);
+                    eprintln!(
+                        "         {} skipped (too few turns)",
+                        stats.skipped_min_turns
+                    );
                 }
                 if !stats.error_details.is_empty() {
                     eprintln!("\nErrors:");
@@ -108,7 +111,10 @@ pub async fn run(
                 },
                 "errors": stats.error_details,
             });
-            println!("{}", serde_json::to_string_pretty(&summary).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&summary).unwrap_or_default()
+            );
         }
     }
 
@@ -443,4 +449,3 @@ fn find_session_by_id(id: &str) -> Result<Vec<PathBuf>> {
     }
     Ok(found)
 }
-

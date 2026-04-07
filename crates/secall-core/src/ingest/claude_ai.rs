@@ -110,11 +110,10 @@ fn read_conversations(path: &Path) -> crate::error::Result<Vec<Conversation>> {
 
 fn extract_conversations_from_zip(data: &[u8]) -> crate::error::Result<String> {
     let reader = Cursor::new(data);
-    let mut archive =
-        zip::ZipArchive::new(reader).map_err(|e| crate::SecallError::Parse {
-            path: "<zip>".to_string(),
-            source: e.into(),
-        })?;
+    let mut archive = zip::ZipArchive::new(reader).map_err(|e| crate::SecallError::Parse {
+        path: "<zip>".to_string(),
+        source: e.into(),
+    })?;
 
     let mut file =
         archive
@@ -177,9 +176,7 @@ fn conversation_to_session(conv: &Conversation) -> crate::error::Result<Session>
                             v.get("title")
                                 .and_then(|t| t.as_str())
                                 .unwrap_or_else(|| {
-                                    v.get("query")
-                                        .and_then(|q| q.as_str())
-                                        .unwrap_or("")
+                                    v.get("query").and_then(|q| q.as_str()).unwrap_or("")
                                 })
                                 .to_string()
                         })
@@ -251,11 +248,7 @@ fn conversation_to_session(conv: &Conversation) -> crate::error::Result<Session>
         .filter(|n| !n.is_empty())
         .map(|n| sanitize_project_name(n));
 
-    let host = Some(
-        gethostname::gethostname()
-            .to_string_lossy()
-            .to_string(),
-    );
+    let host = Some(gethostname::gethostname().to_string_lossy().to_string());
 
     Ok(Session {
         id: conv.uuid.clone(),
@@ -304,9 +297,7 @@ impl SessionParser for ClaudeAiParser {
                         if let Some(arr) = v.as_array() {
                             return arr
                                 .first()
-                                .map(|c| {
-                                    c["chat_messages"].is_array() && c["uuid"].is_string()
-                                })
+                                .map(|c| c["chat_messages"].is_array() && c["uuid"].is_string())
                                 .unwrap_or(false);
                         }
                     }
@@ -318,10 +309,13 @@ impl SessionParser for ClaudeAiParser {
 
     fn parse(&self, path: &Path) -> crate::error::Result<Session> {
         let sessions = self.parse_all(path)?;
-        sessions.into_iter().next().ok_or_else(|| crate::SecallError::Parse {
-            path: path.to_string_lossy().into_owned(),
-            source: anyhow::anyhow!("no conversations found"),
-        })
+        sessions
+            .into_iter()
+            .next()
+            .ok_or_else(|| crate::SecallError::Parse {
+                path: path.to_string_lossy().into_owned(),
+                source: anyhow::anyhow!("no conversations found"),
+            })
     }
 
     fn parse_all(&self, path: &Path) -> crate::error::Result<Vec<Session>> {

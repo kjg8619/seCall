@@ -96,7 +96,9 @@ pub async fn run(local_only: bool, dry_run: bool, no_wiki: bool) -> Result<()> {
                 for sid in &ingest_result.new_session_ids {
                     match wiki::run_update("sonnet", None, Some(sid.as_str()), false).await {
                         Ok(()) => eprintln!("  ✓ wiki updated for {}", &sid[..sid.len().min(8)]),
-                        Err(e) => eprintln!("  ⚠ wiki failed for {}: {e}", &sid[..sid.len().min(8)]),
+                        Err(e) => {
+                            eprintln!("  ⚠ wiki failed for {}: {e}", &sid[..sid.len().min(8)])
+                        }
                     }
                 }
             }
@@ -131,13 +133,19 @@ pub async fn run(local_only: bool, dry_run: bool, no_wiki: bool) -> Result<()> {
         if !local_only && vault_git.is_git_repo() {
             eprintln!("[DRY RUN] Phase 3: Would ingest local sessions into vault");
             if !no_wiki {
-                eprintln!("[DRY RUN] Phase 3.5: Would update wiki for new sessions (skip with --no-wiki)");
+                eprintln!(
+                    "[DRY RUN] Phase 3.5: Would update wiki for new sessions (skip with --no-wiki)"
+                );
             }
-            eprintln!("[DRY RUN] Phase 4: Would push vault changes to remote (git push origin main)");
+            eprintln!(
+                "[DRY RUN] Phase 4: Would push vault changes to remote (git push origin main)"
+            );
         } else {
             eprintln!("[DRY RUN] Phase 3: Would ingest local sessions into vault");
             if !no_wiki {
-                eprintln!("[DRY RUN] Phase 3.5: Would update wiki for new sessions (skip with --no-wiki)");
+                eprintln!(
+                    "[DRY RUN] Phase 3.5: Would update wiki for new sessions (skip with --no-wiki)"
+                );
             }
         }
         eprintln!("\n[DRY RUN] Sync preview complete. No changes made.");
@@ -224,7 +232,9 @@ fn reindex_vault(config: &Config, db: &Database) -> Result<ReindexResult> {
 
 /// ingest --auto 로직 재사용
 async fn run_auto_ingest(config: &Config, db: &Database) -> Result<IngestStats> {
-    use secall_core::ingest::detect::{find_claude_sessions, find_codex_sessions, find_gemini_sessions};
+    use secall_core::ingest::detect::{
+        find_claude_sessions, find_codex_sessions, find_gemini_sessions,
+    };
 
     let tok = create_tokenizer(&config.search.tokenizer)
         .map_err(|e| anyhow::anyhow!("tokenizer init failed: {e}"))?;

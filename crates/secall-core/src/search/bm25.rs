@@ -1,8 +1,8 @@
 // Placeholder — will be fully defined after tokenizer builds
 // to avoid circular compilation issues
+use crate::error::SecallError;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use crate::error::SecallError;
 use serde::Serialize;
 
 use super::tokenizer::Tokenizer;
@@ -189,6 +189,7 @@ fn extract_snippet(content: &str, query: &str, max_chars: usize) -> String {
 // SessionRepo impl for Database — session/turn CRUD
 impl SessionRepo for Database {
     fn insert_session(&self, session: &Session) -> crate::error::Result<()> {
+        use crate::ingest::markdown::extract_summary;
         use chrono::Utc;
         let tools_used: Vec<String> = session
             .turns
@@ -205,9 +206,11 @@ impl SessionRepo for Database {
             .into_iter()
             .collect();
 
+        let summary = extract_summary(session);
+
         self.conn().execute(
-            "INSERT OR IGNORE INTO sessions(id, agent, model, project, cwd, git_branch, host, start_time, end_time, turn_count, tokens_in, tokens_out, tools_used, tags, ingested_at, status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            "INSERT OR IGNORE INTO sessions(id, agent, model, project, cwd, git_branch, host, start_time, end_time, turn_count, tokens_in, tokens_out, tools_used, tags, summary, ingested_at, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             rusqlite::params![
                 session.id,
                 session.agent.as_str(),
@@ -223,6 +226,7 @@ impl SessionRepo for Database {
                 session.total_tokens.output as i64,
                 serde_json::to_string(&tools_used).ok(),
                 serde_json::to_string(&Vec::<String>::new()).ok(),
+                summary,
                 Utc::now().to_rfc3339(),
                 "raw",
             ],
@@ -242,7 +246,11 @@ impl SessionRepo for Database {
         Ok(())
     }
 
-    fn insert_turn(&self, session_id: &str, turn: &crate::ingest::Turn) -> crate::error::Result<i64> {
+    fn insert_turn(
+        &self,
+        session_id: &str,
+        turn: &crate::ingest::Turn,
+    ) -> crate::error::Result<i64> {
         let tool_names: Vec<String> = turn
             .actions
             .iter()

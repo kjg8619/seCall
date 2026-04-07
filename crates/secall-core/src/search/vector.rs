@@ -29,6 +29,7 @@ pub struct VectorIndexer {
     embedder: Box<dyn Embedder>,
     /// HNSW ANN 인덱스. None이면 기존 BLOB 선형 스캔으로 fallback.
     ann_index: Option<AnnIndex>,
+    batch_size: usize,
 }
 
 impl VectorIndexer {
@@ -36,6 +37,7 @@ impl VectorIndexer {
         VectorIndexer {
             embedder,
             ann_index: None,
+            batch_size: 32,
         }
     }
 
@@ -44,63 +46,91 @@ impl VectorIndexer {
         self
     }
 
+    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.batch_size = batch_size.max(1);
+        self
+    }
+
+    /// ANN 인덱스를 파일에 저장. 존재하지 않으면 no-op.
+    pub fn save_ann_if_present(&self) -> Result<()> {
+        if let Some(ref ann) = self.ann_index {
+            ann.save()?;
+        }
+        Ok(())
+    }
+
     pub async fn index_session(&self, db: &Database, session: &Session) -> Result<IndexStats> {
-        let mut stats = IndexStats::default();
         let chunks = chunk_session(session);
 
         // Ensure vector table exists
         db.init_vector_table()?;
 
-        // Batch embed
+        // Phase 1: 임베딩 계산 — 트랜잭션 밖에서 수행 (CPU 시간 동안 DB lock 없음)
         let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
-        let batch_size = 32;
+        let batch_size = self.batch_size;
+        let mut embeddings: Vec<Option<Vec<f32>>> = vec![None; chunks.len()];
+        let mut embed_errors = 0usize;
 
         for (batch_idx, text_batch) in texts.chunks(batch_size).enumerate() {
             match self.embedder.embed_batch(text_batch).await {
-                Ok(embeddings) => {
-                    for (i, embedding) in embeddings.into_iter().enumerate() {
-                        let chunk_idx = batch_idx * batch_size + i;
-                        if let Some(chunk) = chunks.get(chunk_idx) {
-                            match db.insert_vector(
-                                &embedding,
-                                &chunk.session_id,
-                                chunk.turn_index,
-                                chunk.seq,
-                                self.embedder.model_name(),
-                            ) {
-                                Ok(rowid) => {
-                                    stats.chunks_embedded += 1;
-                                    if let Some(ref ann) = self.ann_index {
-                                        if let Err(e) = ann.add(rowid as u64, &embedding) {
-                                            tracing::warn!(error = %e, "ANN index add failed");
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::warn!(error = %e, "vector insert error");
-                                    stats.errors += 1;
-                                }
-                            }
-                        }
+                Ok(batch_embeddings) => {
+                    for (i, emb) in batch_embeddings.into_iter().enumerate() {
+                        embeddings[batch_idx * batch_size + i] = Some(emb);
                     }
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "embedding batch failed");
-                    stats.errors += chunks.len();
+                    embed_errors += text_batch.len();
                 }
             }
         }
 
-        // ANN 인덱스에 벡터가 추가됐으면 저장 (재시작 시 복구 가능하도록)
-        if stats.chunks_embedded > 0 {
-            if let Some(ref ann) = self.ann_index {
-                if let Err(e) = ann.save() {
-                    tracing::warn!(error = %e, "ANN index save failed");
-                }
-            }
+        // Phase 1 실패 → 트랜잭션 진입하지 않고 즉시 에러 반환
+        // find_sessions_without_vectors()가 다음 실행에 이 세션을 다시 선택
+        if embed_errors > 0 {
+            return Err(anyhow::anyhow!(
+                "session {} embedding failed: {}/{} chunks could not be embedded",
+                &session.id,
+                embed_errors,
+                chunks.len()
+            ));
         }
 
-        Ok(stats)
+        // Phase 2: DELETE + INSERT — 세션 단위 트랜잭션으로 원자성 보장
+        // INSERT 실패 시 클로저에서 Err 반환 → with_transaction이 ROLLBACK
+        // 중단 시 트랜잭션 미커밋 → DELETE도 롤백 → 기존 상태 유지
+        let mut chunks_embedded = 0usize;
+
+        db.with_transaction(|| {
+            let deleted = db.delete_session_vectors(&session.id)?;
+            if deleted > 0 {
+                tracing::info!(session_id = %session.id, deleted, "cleaned up partial vectors");
+            }
+
+            for (chunk, emb_opt) in chunks.iter().zip(embeddings.iter()) {
+                if let Some(embedding) = emb_opt {
+                    let rowid = db.insert_vector(
+                        embedding,
+                        &chunk.session_id,
+                        chunk.turn_index,
+                        chunk.seq,
+                        self.embedder.model_name(),
+                    )?; // Err → 클로저 종료 → ROLLBACK
+                    chunks_embedded += 1;
+                    if let Some(ref ann) = self.ann_index {
+                        if let Err(e) = ann.add(rowid as u64, embedding) {
+                            tracing::warn!(error = %e, "ANN index add failed");
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })?;
+
+        Ok(IndexStats {
+            chunks_embedded,
+            ..Default::default()
+        })
     }
 
     pub async fn search(
@@ -133,30 +163,58 @@ impl VectorIndexer {
         // ANN 경로: session_ids 필터 없고 ANN 인덱스 사용 가능할 때
         if candidate_session_ids.is_none() {
             if let Some(ref ann) = self.ann_index {
-                let ann_results = ann.search(embedding, limit)?;
-                let results: Vec<SearchResult> = ann_results
-                    .iter()
-                    .filter_map(|(key, distance)| {
-                        db.get_vector_meta(*key as i64).ok().and_then(
-                            |(session_id, turn_index, _chunk_seq)| {
-                                let meta = db.get_session_meta(&session_id).ok()?;
-                                if !passes_filters(&meta, filters) {
-                                    return None;
+                // Stale guard (크기 기반): ANN이 DB보다 작으면 새 벡터가 ANN에 없음 → BLOB 스캔
+                let db_count = db.count_vectors().unwrap_or(0);
+                if ann.size() < db_count {
+                    tracing::info!(
+                        ann_size = ann.size(),
+                        db_count,
+                        "ANN index stale (size < db_count), falling back to BLOB scan"
+                    );
+                    // fall through to BLOB scan
+                } else {
+                    // Stale guard (rowid 기반): ANN은 add-only라 re-embed/--all 후
+                    // 삭제된 옛 rowid가 남아 size >= db_count를 통과할 수 있음.
+                    // get_vector_meta 실패(DB에 없는 rowid)가 하나라도 나오면 stale로 판단.
+                    let ann_results = ann.search(embedding, limit)?;
+                    let mut stale_found = false;
+                    let mut results = Vec::with_capacity(ann_results.len());
+
+                    for (key, distance) in &ann_results {
+                        match db.get_vector_meta(*key as i64) {
+                            Ok((session_id, turn_index, _chunk_seq)) => {
+                                if let Ok(meta) = db.get_session_meta(&session_id) {
+                                    if passes_filters(&meta, filters) {
+                                        results.push(SearchResult {
+                                            session_id,
+                                            turn_index,
+                                            score: 1.0 - *distance as f64,
+                                            bm25_score: None,
+                                            vector_score: Some(1.0 - *distance as f64),
+                                            snippet: String::new(),
+                                            metadata: meta,
+                                        });
+                                    }
                                 }
-                                Some(SearchResult {
-                                    session_id,
-                                    turn_index,
-                                    score: 1.0 - *distance as f64,
-                                    bm25_score: None,
-                                    vector_score: Some(1.0 - *distance as f64),
-                                    snippet: String::new(),
-                                    metadata: meta,
-                                })
-                            },
-                        )
-                    })
-                    .collect();
-                return Ok(results);
+                            }
+                            Err(_) => {
+                                // rowid가 DB에 없음: re-embed/--all 후 DELETE된 row의 잔재
+                                stale_found = true;
+                            }
+                        }
+                    }
+
+                    if stale_found {
+                        tracing::info!(
+                            ann_size = ann.size(),
+                            db_count,
+                            "stale ANN entries detected (post-reembed rowids), falling back to BLOB scan"
+                        );
+                        // fall through to BLOB scan
+                    } else {
+                        return Ok(results);
+                    }
+                }
             }
         }
 

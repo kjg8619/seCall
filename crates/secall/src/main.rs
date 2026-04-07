@@ -103,6 +103,10 @@ enum Commands {
         /// Embedding batch size (default: 32)
         #[arg(long)]
         batch_size: Option<usize>,
+
+        /// Number of sessions to embed concurrently (default: 4)
+        #[arg(long, default_value = "4")]
+        concurrency: usize,
     },
 
     /// Verify index and vault integrity
@@ -156,6 +160,12 @@ enum Commands {
         #[command(subcommand)]
         action: WikiAction,
     },
+
+    /// Run data migrations
+    Migrate {
+        #[command(subcommand)]
+        action: MigrateAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -198,6 +208,16 @@ enum WikiAction {
     Status,
 }
 
+#[derive(Subcommand)]
+enum MigrateAction {
+    /// Backfill summary field for existing sessions
+    Summary {
+        /// Dry run — show what would be changed without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // stderr 전용 — stdout은 MCP 프로토콜 전용
@@ -216,7 +236,12 @@ async fn main() -> anyhow::Result<()> {
         Commands::Init { vault, git } => {
             commands::init::run(vault, git)?;
         }
-        Commands::Ingest { path, auto, cwd, min_turns } => {
+        Commands::Ingest {
+            path,
+            auto,
+            cwd,
+            min_turns,
+        } => {
             commands::ingest::run(path, auto, cwd, min_turns, &cli.format).await?;
         }
         Commands::Recall {
@@ -248,8 +273,12 @@ async fn main() -> anyhow::Result<()> {
         Commands::Status => {
             commands::status::run()?;
         }
-        Commands::Embed { all, batch_size } => {
-            commands::embed::run(all, batch_size).await?;
+        Commands::Embed {
+            all,
+            batch_size,
+            concurrency,
+        } => {
+            commands::embed::run(all, batch_size, concurrency).await?;
         }
         Commands::Lint { json, errors_only } => {
             commands::lint::run(json, errors_only)?;
@@ -293,6 +322,11 @@ async fn main() -> anyhow::Result<()> {
             }
             WikiAction::Status => {
                 commands::wiki::run_status()?;
+            }
+        },
+        Commands::Migrate { action } => match action {
+            MigrateAction::Summary { dry_run } => {
+                commands::migrate::run_summary(dry_run)?;
             }
         },
     }

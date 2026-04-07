@@ -1,4 +1,4 @@
-pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 pub const CREATE_SESSIONS: &str = "
 CREATE TABLE IF NOT EXISTS sessions (
@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     tags        TEXT,
     vault_path  TEXT,
     host        TEXT,
+    summary     TEXT,
     ingested_at TEXT NOT NULL,
     status      TEXT DEFAULT 'raw'
 );

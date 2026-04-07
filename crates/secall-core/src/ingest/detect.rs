@@ -4,10 +4,7 @@ use std::path::Path;
 use anyhow::{anyhow, Result};
 
 use super::{
-    claude::ClaudeCodeParser,
-    claude_ai::ClaudeAiParser,
-    codex::CodexParser,
-    gemini::GeminiParser,
+    claude::ClaudeCodeParser, claude_ai::ClaudeAiParser, codex::CodexParser, gemini::GeminiParser,
     SessionParser,
 };
 
@@ -278,6 +275,9 @@ mod tests {
         )
         .unwrap();
         let parser = detect_parser(&json_path).unwrap();
-        assert_eq!(parser.agent_kind(), super::super::types::AgentKind::ClaudeAi);
+        assert_eq!(
+            parser.agent_kind(),
+            super::super::types::AgentKind::ClaudeAi
+        );
     }
 }

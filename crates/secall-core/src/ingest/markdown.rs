@@ -21,8 +21,8 @@ pub struct SessionFrontmatter {
     pub tools_used: Option<Vec<String>>,
     pub host: Option<String>,
     pub status: Option<String>,
+    pub summary: Option<String>,
 }
-
 
 /// vault 마크다운 파일에서 frontmatter YAML을 파싱.
 pub fn parse_session_frontmatter(content: &str) -> crate::error::Result<SessionFrontmatter> {
@@ -35,12 +35,11 @@ pub fn parse_session_frontmatter(content: &str) -> crate::error::Result<SessionF
             source: anyhow::anyhow!("no frontmatter found"),
         })?;
 
-    let parsed: SessionFrontmatter = serde_yaml::from_str(fm).map_err(|e| {
-        crate::SecallError::Parse {
+    let parsed: SessionFrontmatter =
+        serde_yaml::from_str(fm).map_err(|e| crate::SecallError::Parse {
             path: "<frontmatter>".to_string(),
             source: e.into(),
-        }
-    })?;
+        })?;
     Ok(parsed)
 }
 
@@ -105,6 +104,10 @@ pub fn render_session(session: &Session) -> String {
     out.push_str(&format!("tools_used: [{}]\n", tools_used.join(", ")));
     if let Some(host) = &session.host {
         out.push_str(&format!("host: {host}\n"));
+    }
+    if let Some(summary) = extract_summary(session) {
+        let escaped = escape_yaml_string(&summary);
+        out.push_str(&format!("summary: \"{escaped}\"\n"));
     }
     out.push_str("status: raw\n");
     out.push_str("---\n\n");
@@ -254,6 +257,56 @@ fn session_filename(session: &Session) -> String {
         &session.id
     };
     format!("{agent}_{project}_{id_prefix}.md")
+}
+
+fn escape_yaml_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// 세션의 첫 User 턴에서 비어있지 않은 첫 줄을 80자로 truncate하여 반환.
+pub(crate) fn extract_summary(session: &super::types::Session) -> Option<String> {
+    let first_user_turn = session
+        .turns
+        .iter()
+        .find(|t| t.role == super::types::Role::User)?;
+    let first_line = first_user_turn
+        .content
+        .lines()
+        .find(|l| !l.trim().is_empty())?;
+    let trimmed = first_line.trim().to_string();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(truncate_str(&trimmed, 80))
+}
+
+/// vault MD 본문에서 첫 User 턴의 실질적 첫 줄을 summary로 추출.
+pub fn extract_summary_from_body(content: &str) -> Option<String> {
+    // frontmatter 이후 본문
+    let body = content
+        .split_once("\n---\n")
+        .map(|(_, b)| b)
+        .unwrap_or(content);
+
+    // "## Turn N — User" 패턴의 첫 번째 섹션 찾기
+    let mut in_user_section = false;
+    for line in body.lines() {
+        if line.starts_with("## Turn ") && line.contains("— User") {
+            in_user_section = true;
+            continue;
+        }
+        if in_user_section {
+            // 다음 ## 헤더가 나오면 종료
+            if line.starts_with("## ") {
+                break;
+            }
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                return Some(truncate_str(trimmed, 80));
+            }
+        }
+    }
+    None
 }
 
 fn truncate_str(s: &str, max_chars: usize) -> String {
@@ -427,5 +480,71 @@ mod tests {
         let frontmatter = &after_first[..end];
         // Basic checks: no unescaped special chars that break YAML
         assert!(!frontmatter.contains(":\n:")); // no double colon issues
+    }
+
+    fn make_turn(role: Role, content: &str) -> Turn {
+        Turn {
+            index: 0,
+            role,
+            timestamp: None,
+            content: content.to_string(),
+            actions: Vec::new(),
+            tokens: None,
+            thinking: None,
+            is_sidechain: false,
+        }
+    }
+
+    #[test]
+    fn test_summary_from_first_user_turn() {
+        let session = make_session(vec![make_turn(Role::User, "세션 요약 기능 추가")]);
+        let summary = extract_summary(&session);
+        assert_eq!(summary, Some("세션 요약 기능 추가".to_string()));
+    }
+
+    #[test]
+    fn test_summary_skips_empty_lines() {
+        let session = make_session(vec![make_turn(Role::User, "\n\n실제 내용")]);
+        let summary = extract_summary(&session);
+        assert_eq!(summary, Some("실제 내용".to_string()));
+    }
+
+    #[test]
+    fn test_summary_truncation() {
+        let long_content = "a".repeat(100);
+        let session = make_session(vec![make_turn(Role::User, &long_content)]);
+        let summary = extract_summary(&session);
+        let s = summary.unwrap();
+        // 80 chars + "..."
+        assert_eq!(s.len(), 83);
+        assert!(s.ends_with("..."));
+    }
+
+    #[test]
+    fn test_summary_none_when_no_user_turn() {
+        let session = make_session(vec![make_turn(Role::Assistant, "응답 내용")]);
+        let summary = extract_summary(&session);
+        assert_eq!(summary, None);
+    }
+
+    #[test]
+    fn test_summary_yaml_escape() {
+        let session = make_session(vec![make_turn(
+            Role::User,
+            r#"say "hello" and \ backslash"#,
+        )]);
+        let md = render_session(&session);
+        assert!(md.contains(r#"summary: "say \"hello\" and \\ backslash""#));
+    }
+
+    #[test]
+    fn test_summary_in_frontmatter() {
+        let session = make_session(vec![make_turn(Role::User, "첫 번째 사용자 메시지")]);
+        let md = render_session(&session);
+        assert!(md.contains("summary: \"첫 번째 사용자 메시지\""));
+        // summary가 status 전에 위치하는지 확인
+        let summary_pos = md.find("summary:").unwrap();
+        let status_pos = md.find("status: raw").unwrap();
+        assert!(summary_pos < status_pos);
     }
 }

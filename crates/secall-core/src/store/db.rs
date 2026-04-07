@@ -51,8 +51,21 @@ impl Database {
 
         let current = version.unwrap_or(0);
 
-        if current < CURRENT_SCHEMA_VERSION {
+        if current < 1 {
             self.apply_v1()?;
+        }
+        if current < 2 {
+            // Column migrations for v2
+            if !self.column_exists("sessions", "host")? {
+                self.conn
+                    .execute("ALTER TABLE sessions ADD COLUMN host TEXT", [])?;
+            }
+            if !self.column_exists("sessions", "summary")? {
+                self.conn
+                    .execute("ALTER TABLE sessions ADD COLUMN summary TEXT", [])?;
+            }
+        }
+        if current < CURRENT_SCHEMA_VERSION {
             self.conn.execute(
                 "INSERT OR REPLACE INTO config(key, value) VALUES ('schema_version', ?1)",
                 [CURRENT_SCHEMA_VERSION.to_string()],
@@ -61,12 +74,6 @@ impl Database {
 
         // Non-versioned additions: always apply (CREATE IF NOT EXISTS)
         self.conn.execute_batch(CREATE_QUERY_CACHE)?;
-
-        // Column migrations: host
-        if !self.column_exists("sessions", "host")? {
-            self.conn
-                .execute("ALTER TABLE sessions ADD COLUMN host TEXT", [])?;
-        }
 
         Ok(())
     }
@@ -247,6 +254,22 @@ impl Database {
         Ok(count)
     }
 
+    /// turn_vectors 테이블의 총 벡터 수. ANN stale 감지에 사용.
+    pub fn count_vectors(&self) -> Result<usize> {
+        let exists: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='turn_vectors'",
+            [],
+            |r| r.get(0),
+        )?;
+        if exists == 0 {
+            return Ok(0);
+        }
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM turn_vectors", [], |r| r.get(0))?;
+        Ok(count as usize)
+    }
+
     /// Sessions that have no rows in turn_vectors
     pub fn find_sessions_without_vectors(&self) -> Result<Vec<String>> {
         let table_exists: i64 = self.conn.query_row(
@@ -298,11 +321,38 @@ impl Database {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
+    /// 세션의 모든 벡터를 삭제. 부분 임베딩 정리 및 재임베딩 전 DELETE-first에 사용.
+    pub fn delete_session_vectors(&self, session_id: &str) -> Result<usize> {
+        // turn_vectors 테이블이 없으면 0 반환 (정상)
+        let table_exists: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='turn_vectors'",
+            [],
+            |r| r.get(0),
+        )?;
+        if table_exists == 0 {
+            return Ok(0);
+        }
+        let deleted = self.conn.execute(
+            "DELETE FROM turn_vectors WHERE session_id = ?1",
+            rusqlite::params![session_id],
+        )?;
+        Ok(deleted)
+    }
+
     /// Return all session IDs in the database
     pub fn list_all_session_ids(&self) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare("SELECT id FROM sessions")?;
         let rows = stmt.query_map([], |row| row.get(0))?;
         Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// session summary 업데이트
+    pub fn update_session_summary(&self, session_id: &str, summary: &str) -> Result<()> {
+        self.conn().execute(
+            "UPDATE sessions SET summary = ?1 WHERE id = ?2",
+            rusqlite::params![summary, session_id],
+        )?;
+        Ok(())
     }
 
     /// Find session IDs ingested more than once in ingest_log
@@ -353,11 +403,11 @@ impl Database {
             "INSERT OR IGNORE INTO sessions(
                 id, agent, model, project, cwd, git_branch, host,
                 start_time, end_time, turn_count, tokens_in, tokens_out,
-                tools_used, vault_path, ingested_at, status
+                tools_used, vault_path, summary, ingested_at, status
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, NULL, ?6,
                 ?7, ?8, ?9, ?10, ?11,
-                ?12, ?13, datetime('now'), 'reindexed'
+                ?12, ?13, ?14, datetime('now'), 'reindexed'
             )",
             rusqlite::params![
                 fm.session_id,
@@ -373,6 +423,7 @@ impl Database {
                 fm.tokens_out.unwrap_or(0),
                 fm.tools_used.as_ref().map(|t| t.join(",")),
                 vault_path,
+                fm.summary,
             ],
         )?;
 
@@ -389,15 +440,21 @@ impl Database {
 
     /// session_id로 Session 구조체를 재구성 (벡터 임베딩용).
     /// turns 테이블에서 content를 읽어 Session.turns를 채운다.
-    pub fn get_session_for_embedding(
-        &self,
-        session_id: &str,
-    ) -> Result<crate::ingest::Session> {
+    pub fn get_session_for_embedding(&self, session_id: &str) -> Result<crate::ingest::Session> {
         use crate::ingest::{AgentKind, Role, Session, TokenUsage, Turn};
         use chrono::DateTime;
 
         // 세션 메타 조회
-        let (agent_str, model, project, cwd_str, start_time_str, end_time_str, tokens_in, tokens_out) = self
+        let (
+            agent_str,
+            model,
+            project,
+            cwd_str,
+            start_time_str,
+            end_time_str,
+            tokens_in,
+            tokens_out,
+        ) = self
             .conn
             .query_row(
                 "SELECT agent, model, project, cwd, start_time, end_time, tokens_in, tokens_out
@@ -611,7 +668,7 @@ mod tests {
     #[test]
     fn test_schema_version_stored() {
         let db = Database::open_memory().unwrap();
-        assert_eq!(db.schema_version().unwrap(), 1);
+        assert_eq!(db.schema_version().unwrap(), 2);
     }
 
     #[test]
@@ -619,6 +676,6 @@ mod tests {
         let db = Database::open_memory().unwrap();
         // Second migrate call should not error
         db.migrate().unwrap();
-        assert_eq!(db.schema_version().unwrap(), 1);
+        assert_eq!(db.schema_version().unwrap(), 2);
     }
 }

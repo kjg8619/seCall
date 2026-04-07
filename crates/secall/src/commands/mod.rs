@@ -4,6 +4,7 @@ pub mod ingest;
 pub mod init;
 pub mod lint;
 pub mod mcp;
+pub mod migrate;
 pub mod model;
 pub mod recall;
 pub mod reindex;

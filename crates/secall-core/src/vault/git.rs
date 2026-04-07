@@ -91,7 +91,10 @@ impl<'a> VaultGit<'a> {
         }
 
         let change_count = changes.lines().count();
-        tracing::info!(changes = change_count, "auto-committing unstaged vault changes before pull");
+        tracing::info!(
+            changes = change_count,
+            "auto-committing unstaged vault changes before pull"
+        );
 
         // vault 관련 파일만 stage (raw/, wiki/, index.md, log.md, .gitignore)
         self.run_git(&["add", "raw/", "wiki/", "index.md", "log.md", ".gitignore"])?;

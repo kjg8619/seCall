@@ -144,6 +144,95 @@ impl OrtEmbedder {
         Ok(embedding.len())
     }
 
+    /// batch 단위로 inference. padding + attention_mask 구성 후 단일 session.run() 호출.
+    fn run_inference_batch(
+        session: &mut ort::session::Session,
+        tokenizer: &tokenizers::Tokenizer,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>> {
+        use ndarray::Array2;
+        use ort::value::TensorRef;
+
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 배치 토크나이즈
+        let encodings = tokenizer
+            .encode_batch(texts.iter().map(|t| t.as_str()).collect::<Vec<_>>(), true)
+            .map_err(|e| anyhow!("batch tokenize failed: {e}"))?;
+
+        let batch_size = texts.len();
+        let max_len = encodings
+            .iter()
+            .map(|e| e.get_ids().len())
+            .max()
+            .unwrap_or(0);
+
+        if max_len == 0 {
+            return Ok(vec![Vec::new(); batch_size]);
+        }
+
+        // padding: Array2::zeros으로 zero-padding 후 실제 token으로 채움
+        let mut input_ids = Array2::<i64>::zeros((batch_size, max_len));
+        let mut attention_mask = Array2::<i64>::zeros((batch_size, max_len));
+
+        for (i, enc) in encodings.iter().enumerate() {
+            let ids = enc.get_ids();
+            let mask = enc.get_attention_mask();
+            for (j, (&id, &m)) in ids.iter().zip(mask.iter()).enumerate() {
+                input_ids[[i, j]] = id as i64;
+                attention_mask[[i, j]] = m as i64;
+            }
+        }
+
+        // 단일 session.run() — shape (batch_size, max_len)
+        let ids_ref = TensorRef::<i64>::from_array_view(input_ids.view())
+            .map_err(|e| anyhow!("tensor ids: {e}"))?;
+        let mask_ref = TensorRef::<i64>::from_array_view(attention_mask.view())
+            .map_err(|e| anyhow!("tensor mask: {e}"))?;
+
+        let outputs = session.run(ort::inputs![
+            "input_ids" => ids_ref,
+            "attention_mask" => mask_ref,
+        ])?;
+
+        // last_hidden_state shape: [batch_size, max_len, dim]
+        let hidden_arr = outputs["last_hidden_state"].try_extract_array::<f32>()?;
+        let dim = hidden_arr.shape()[2];
+
+        // attention_mask 기반 mean pooling + L2 normalize
+        let mut results = Vec::with_capacity(batch_size);
+        for i in 0..batch_size {
+            let mask_sum = attention_mask
+                .row(i)
+                .iter()
+                .map(|&m| m as f32)
+                .sum::<f32>()
+                .max(1e-9);
+            let mut embedding = vec![0.0f32; dim];
+            for j in 0..max_len {
+                let m = attention_mask[[i, j]] as f32;
+                for d in 0..dim {
+                    embedding[d] += hidden_arr[[i, j, d]] * m;
+                }
+            }
+            for e in embedding.iter_mut() {
+                *e /= mask_sum;
+            }
+            // L2 normalize
+            let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm > 1e-9 {
+                for e in embedding.iter_mut() {
+                    *e /= norm;
+                }
+            }
+            results.push(embedding);
+        }
+
+        Ok(results)
+    }
+
     fn run_inference(
         session: &mut ort::session::Session,
         tokenizer: &tokenizers::Tokenizer,
@@ -236,11 +325,7 @@ impl Embedder for OrtEmbedder {
             let mut session = session
                 .lock()
                 .map_err(|_| anyhow!("ort session lock poisoned"))?;
-            let mut results = Vec::with_capacity(texts.len());
-            for text in &texts {
-                results.push(Self::run_inference(&mut session, &tokenizer, text)?);
-            }
-            Ok(results)
+            Self::run_inference_batch(&mut session, &tokenizer, &texts)
         })
         .await
         .map_err(|e| anyhow!("spawn_blocking join error: {e}"))?
