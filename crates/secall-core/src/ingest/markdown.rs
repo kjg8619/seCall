@@ -26,7 +26,8 @@ pub struct SessionFrontmatter {
 
 /// vault 마크다운 파일에서 frontmatter YAML을 파싱.
 pub fn parse_session_frontmatter(content: &str) -> crate::error::Result<SessionFrontmatter> {
-    let fm = content
+    let normalized = content.replace("\r\n", "\n");
+    let fm = normalized
         .strip_prefix("---\n")
         .and_then(|s| s.split_once("\n---"))
         .map(|(fm, _)| fm)
@@ -46,6 +47,7 @@ pub fn parse_session_frontmatter(content: &str) -> crate::error::Result<SessionF
 /// frontmatter 이후의 본문 텍스트 추출 (턴 내용).
 pub fn extract_body_text(content: &str) -> String {
     content
+        .replace("\r\n", "\n")
         .split_once("\n---\n")
         .map(|(_, body)| body.split_once('\n').map(|(_, rest)| rest).unwrap_or(body))
         .unwrap_or("")
@@ -499,7 +501,7 @@ mod tests {
     fn test_session_vault_path() {
         let session = make_session(vec![]);
         let path = session_vault_path(&session, chrono_tz::Tz::UTC);
-        let path_str = path.to_string_lossy();
+        let path_str = path.to_string_lossy().replace('\\', "/");
         assert!(path_str.starts_with("raw/sessions/2026-04-05/"));
         assert!(path_str.contains("claude-code_seCall_a1b2c3d"));
         assert!(path_str.ends_with(".md"));
