@@ -11,7 +11,7 @@ use super::instructions::build_instructions;
 use super::tools::{GetParams, QueryType, RecallParams, StatusParams, WikiSearchParams};
 use crate::error::SecallError;
 use crate::search::bm25::{SearchFilters, SearchResult};
-use crate::search::hybrid::{parse_temporal_filter, SearchEngine};
+use crate::search::hybrid::{diversify_by_session, parse_temporal_filter, SearchEngine};
 use crate::store::db::Database;
 use crate::store::SessionRepo;
 
@@ -62,6 +62,7 @@ impl SeCallMcpServer {
             agent: params.agent,
             since: None,
             until: None,
+            ..Default::default()
         };
 
         // Apply any temporal filters first
@@ -143,6 +144,11 @@ impl SeCallMcpServer {
         });
         let mut seen = std::collections::HashSet::new();
         all_results.retain(|r| seen.insert((r.session_id.clone(), r.turn_index)));
+
+        // 세션 다양성 적용
+        let max_per = base_filters.max_per_session.unwrap_or(2);
+        all_results = diversify_by_session(all_results, max_per);
+
         all_results.truncate(limit);
 
         let count = all_results.len();

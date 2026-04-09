@@ -52,6 +52,7 @@ pub async fn run(
         agent,
         since: since_filter,
         until: until_filter,
+        ..Default::default()
     };
 
     // Build search engine

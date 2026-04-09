@@ -67,6 +67,27 @@ pub fn reciprocal_rank_fusion(
     results
 }
 
+/// 세션당 최대 N개 턴만 유지하여 결과 다양성 확보.
+/// 입력은 점수 내림차순 정렬되어 있어야 함.
+pub(crate) fn diversify_by_session(
+    results: Vec<SearchResult>,
+    max_per_session: usize,
+) -> Vec<SearchResult> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    results
+        .into_iter()
+        .filter(|r| {
+            let count = counts.entry(r.session_id.clone()).or_insert(0);
+            if *count < max_per_session {
+                *count += 1;
+                true
+            } else {
+                false
+            }
+        })
+        .collect()
+}
+
 pub struct SearchEngine {
     bm25: Bm25Indexer,
     vector: Option<VectorIndexer>,
@@ -88,35 +109,39 @@ impl SearchEngine {
 
         let bm25_results = self.bm25.search(db, query, candidate_limit, filters)?;
 
-        // BM25 결과에서 후보 session_id 추출 → 벡터 검색 범위 제한
-        let candidate_ids: Vec<String> = {
-            let mut seen = std::collections::HashSet::new();
-            bm25_results
-                .iter()
-                .map(|r| r.session_id.clone())
-                .filter(|id| seen.insert(id.clone()))
-                .collect()
-        };
-
+        // 벡터 검색을 독립 실행 (BM25 결과로 범위 제한하지 않음)
         let vector_results = if let Some(vi) = &self.vector {
-            let ids_opt = if candidate_ids.is_empty() {
-                None // BM25 결과 없음 → 전체 검색
-            } else {
-                Some(candidate_ids.as_slice())
-            };
-            vi.search(db, query, candidate_limit, filters, ids_opt)
+            vi.search(db, query, candidate_limit, filters, None)
                 .await
                 .unwrap_or_default()
         } else {
             Vec::new()
         };
 
+        if bm25_results.is_empty() && vector_results.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let max_per = filters.max_per_session.unwrap_or(2);
+
         if vector_results.is_empty() {
             // BM25-only mode
-            return Ok(bm25_results.into_iter().take(limit).collect());
+            let mut results: Vec<_> = bm25_results.into_iter().collect();
+            results = diversify_by_session(results, max_per);
+            results.truncate(limit);
+            return Ok(results);
+        }
+
+        if bm25_results.is_empty() {
+            let mut results: Vec<_> = vector_results.into_iter().collect();
+            results = diversify_by_session(results, max_per);
+            results.truncate(limit);
+            return Ok(results);
         }
 
         let mut combined = reciprocal_rank_fusion(&bm25_results, &vector_results, RRF_K);
+        // 세션 다양성 적용 (기본값: 세션당 최대 2개)
+        combined = diversify_by_session(combined, max_per);
         combined.truncate(limit);
         Ok(combined)
     }
@@ -330,6 +355,58 @@ mod tests {
             .map(|r| r.score)
             .fold(f64::NEG_INFINITY, f64::max);
         assert!((max_score - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_diversify_by_session() {
+        let results = vec![
+            make_result("A", 0, 1.0),
+            make_result("A", 1, 0.9),
+            make_result("A", 2, 0.8),
+            make_result("B", 0, 0.7),
+            make_result("C", 0, 0.6),
+        ];
+        let diversified = diversify_by_session(results, 2);
+        // A는 2개만 유지, B와 C는 그대로
+        assert_eq!(diversified.len(), 4);
+        assert_eq!(
+            diversified.iter().filter(|r| r.session_id == "A").count(),
+            2
+        );
+        assert_eq!(
+            diversified.iter().filter(|r| r.session_id == "B").count(),
+            1
+        );
+        assert_eq!(
+            diversified.iter().filter(|r| r.session_id == "C").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_diversify_max_1() {
+        let results = vec![
+            make_result("A", 0, 1.0),
+            make_result("A", 1, 0.9),
+            make_result("B", 0, 0.8),
+        ];
+        let diversified = diversify_by_session(results, 1);
+        assert_eq!(diversified.len(), 2);
+        assert_eq!(diversified[0].session_id, "A");
+        assert_eq!(diversified[0].turn_index, 0); // 최고 점수 턴 유지
+        assert_eq!(diversified[1].session_id, "B");
+    }
+
+    #[test]
+    fn test_diversify_no_limit() {
+        let results = vec![
+            make_result("A", 0, 1.0),
+            make_result("A", 1, 0.9),
+            make_result("A", 2, 0.8),
+        ];
+        // max_per_session이 충분히 크면 모든 결과 유지
+        let diversified = diversify_by_session(results, 100);
+        assert_eq!(diversified.len(), 3);
     }
 
     #[test]

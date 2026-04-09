@@ -23,6 +23,8 @@ pub struct SearchFilters {
     pub agent: Option<String>,
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,
+    /// 세션당 최대 결과 수 (None = 제한 없음)
+    pub max_per_session: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
