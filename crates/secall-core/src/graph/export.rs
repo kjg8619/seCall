@@ -20,9 +20,9 @@ pub fn export_graph_json(db: &Database, output_path: &Path) -> Result<()> {
         .collect();
 
     // 엣지 수집
-    let mut stmt = db.conn().prepare(
-        "SELECT source, target, relation, confidence, weight FROM graph_edges",
-    )?;
+    let mut stmt = db
+        .conn()
+        .prepare("SELECT source, target, relation, confidence, weight FROM graph_edges")?;
     let links: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
             Ok((
@@ -52,8 +52,8 @@ pub fn export_graph_json(db: &Database, output_path: &Path) -> Result<()> {
         "links": links,
     });
 
-    let json_str = serde_json::to_string_pretty(&json)
-        .map_err(|e| crate::SecallError::Other(e.into()))?;
+    let json_str =
+        serde_json::to_string_pretty(&json).map_err(|e| crate::SecallError::Other(e.into()))?;
 
     // 원자적 쓰기
     let tmp_path = output_path.with_extension("json.tmp");

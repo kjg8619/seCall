@@ -121,10 +121,7 @@ pub fn extract_session_relations(sessions: &[SessionFrontmatter]) -> Vec<GraphEd
     for fm in sessions {
         if let Some(project) = &fm.project {
             if !project.is_empty() {
-                project_groups
-                    .entry(project.clone())
-                    .or_default()
-                    .push(fm);
+                project_groups.entry(project.clone()).or_default().push(fm);
             }
         }
     }
@@ -176,7 +173,14 @@ pub fn extract_session_relations(sessions: &[SessionFrontmatter]) -> Vec<GraphEd
 mod tests {
     use super::*;
 
-    fn make_fm(id: &str, project: Option<&str>, agent: &str, tools: Option<Vec<&str>>, date: &str, start_time: &str) -> SessionFrontmatter {
+    fn make_fm(
+        id: &str,
+        project: Option<&str>,
+        agent: &str,
+        tools: Option<Vec<&str>>,
+        date: &str,
+        start_time: &str,
+    ) -> SessionFrontmatter {
         SessionFrontmatter {
             session_id: id.to_string(),
             agent: agent.to_string(),
@@ -198,7 +202,14 @@ mod tests {
 
     #[test]
     fn test_extract_from_frontmatter() {
-        let fm = make_fm("abc12345", Some("tunaflow"), "claude-code", Some(vec!["Edit", "Read"]), "2026-04-10", "2026-04-10T00:00:00Z");
+        let fm = make_fm(
+            "abc12345",
+            Some("tunaflow"),
+            "claude-code",
+            Some(vec!["Edit", "Read"]),
+            "2026-04-10",
+            "2026-04-10T00:00:00Z",
+        );
         let result = extract_from_frontmatter(&fm);
 
         // session, project, agent, tool(Edit), tool(Read) = 5 nodes
@@ -206,24 +217,62 @@ mod tests {
         assert!(result.nodes.iter().any(|n| n.node_type == "session"));
         assert!(result.nodes.iter().any(|n| n.node_type == "project"));
         assert!(result.nodes.iter().any(|n| n.node_type == "agent"));
-        assert_eq!(result.nodes.iter().filter(|n| n.node_type == "tool").count(), 2);
+        assert_eq!(
+            result
+                .nodes
+                .iter()
+                .filter(|n| n.node_type == "tool")
+                .count(),
+            2
+        );
 
         // belongs_to, by_agent, uses_tool×2 = 4 edges
         assert_eq!(result.edges.len(), 4);
         assert!(result.edges.iter().any(|e| e.relation == "belongs_to"));
         assert!(result.edges.iter().any(|e| e.relation == "by_agent"));
-        assert_eq!(result.edges.iter().filter(|e| e.relation == "uses_tool").count(), 2);
+        assert_eq!(
+            result
+                .edges
+                .iter()
+                .filter(|e| e.relation == "uses_tool")
+                .count(),
+            2
+        );
     }
 
     #[test]
     fn test_extract_session_relations_same_project() {
         let sessions = vec![
-            make_fm("s1", Some("proj"), "claude-code", None, "2026-04-10", "2026-04-10T01:00:00Z"),
-            make_fm("s2", Some("proj"), "claude-code", None, "2026-04-10", "2026-04-10T02:00:00Z"),
-            make_fm("s3", Some("proj"), "claude-code", None, "2026-04-10", "2026-04-10T03:00:00Z"),
+            make_fm(
+                "s1",
+                Some("proj"),
+                "claude-code",
+                None,
+                "2026-04-10",
+                "2026-04-10T01:00:00Z",
+            ),
+            make_fm(
+                "s2",
+                Some("proj"),
+                "claude-code",
+                None,
+                "2026-04-10",
+                "2026-04-10T02:00:00Z",
+            ),
+            make_fm(
+                "s3",
+                Some("proj"),
+                "claude-code",
+                None,
+                "2026-04-10",
+                "2026-04-10T03:00:00Z",
+            ),
         ];
         let edges = extract_session_relations(&sessions);
-        let same_project: Vec<_> = edges.iter().filter(|e| e.relation == "same_project").collect();
+        let same_project: Vec<_> = edges
+            .iter()
+            .filter(|e| e.relation == "same_project")
+            .collect();
         // 3개 세션 → 2개 인접 엣지
         assert_eq!(same_project.len(), 2);
     }
@@ -231,9 +280,30 @@ mod tests {
     #[test]
     fn test_extract_session_relations_same_day() {
         let sessions = vec![
-            make_fm("s1", None, "claude-code", None, "2026-04-10", "2026-04-10T01:00:00Z"),
-            make_fm("s2", None, "claude-code", None, "2026-04-10", "2026-04-10T02:00:00Z"),
-            make_fm("s3", None, "claude-code", None, "2026-04-11", "2026-04-11T01:00:00Z"),
+            make_fm(
+                "s1",
+                None,
+                "claude-code",
+                None,
+                "2026-04-10",
+                "2026-04-10T01:00:00Z",
+            ),
+            make_fm(
+                "s2",
+                None,
+                "claude-code",
+                None,
+                "2026-04-10",
+                "2026-04-10T02:00:00Z",
+            ),
+            make_fm(
+                "s3",
+                None,
+                "claude-code",
+                None,
+                "2026-04-11",
+                "2026-04-11T01:00:00Z",
+            ),
         ];
         let edges = extract_session_relations(&sessions);
         let same_day: Vec<_> = edges.iter().filter(|e| e.relation == "same_day").collect();

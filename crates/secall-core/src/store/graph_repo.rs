@@ -50,9 +50,9 @@ impl Database {
         let mut results = Vec::new();
 
         // 나가는 엣지 (source = node_id)
-        let mut stmt = self.conn().prepare(
-            "SELECT target, relation FROM graph_edges WHERE source = ?1",
-        )?;
+        let mut stmt = self
+            .conn()
+            .prepare("SELECT target, relation FROM graph_edges WHERE source = ?1")?;
         let out_rows = stmt.query_map([node_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -61,9 +61,9 @@ impl Database {
         }
 
         // 들어오는 엣지 (target = node_id)
-        let mut stmt = self.conn().prepare(
-            "SELECT source, relation FROM graph_edges WHERE target = ?1",
-        )?;
+        let mut stmt = self
+            .conn()
+            .prepare("SELECT source, relation FROM graph_edges WHERE target = ?1")?;
         let in_rows = stmt.query_map([node_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -86,12 +86,12 @@ impl Database {
             return Ok(GraphStats::default());
         }
 
-        let node_count: i64 = self
-            .conn()
-            .query_row("SELECT COUNT(*) FROM graph_nodes", [], |r| r.get(0))?;
-        let edge_count: i64 = self
-            .conn()
-            .query_row("SELECT COUNT(*) FROM graph_edges", [], |r| r.get(0))?;
+        let node_count: i64 =
+            self.conn()
+                .query_row("SELECT COUNT(*) FROM graph_nodes", [], |r| r.get(0))?;
+        let edge_count: i64 =
+            self.conn()
+                .query_row("SELECT COUNT(*) FROM graph_edges", [], |r| r.get(0))?;
 
         let mut nodes_by_type: HashMap<String, usize> = HashMap::new();
         let mut stmt = self
@@ -164,7 +164,8 @@ impl Database {
 
     /// 그래프 전체 초기화 (--force 용)
     pub fn clear_graph(&self) -> Result<()> {
-        self.conn().execute_batch("DELETE FROM graph_edges; DELETE FROM graph_nodes;")?;
+        self.conn()
+            .execute_batch("DELETE FROM graph_edges; DELETE FROM graph_nodes;")?;
         Ok(())
     }
 
@@ -186,16 +187,14 @@ impl Database {
 
     /// 이미 그래프에 포함된 세션 ID 목록
     pub fn list_graphed_session_ids(&self) -> Result<Vec<String>> {
-        let mut stmt = self.conn().prepare(
-            "SELECT id FROM graph_nodes WHERE type = 'session'",
-        )?;
+        let mut stmt = self
+            .conn()
+            .prepare("SELECT id FROM graph_nodes WHERE type = 'session'")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         // "session:{id}" → "{id}" 변환
         let ids = rows
             .filter_map(|r| r.ok())
-            .filter_map(|s| {
-                s.strip_prefix("session:").map(|id| id.to_string())
-            })
+            .filter_map(|s| s.strip_prefix("session:").map(|id| id.to_string()))
             .collect();
         Ok(ids)
     }
@@ -206,9 +205,7 @@ impl Database {
         if relations.is_empty() {
             return Ok(0);
         }
-        let placeholders: Vec<String> = (1..=relations.len())
-            .map(|i| format!("?{}", i))
-            .collect();
+        let placeholders: Vec<String> = (1..=relations.len()).map(|i| format!("?{}", i)).collect();
         let sql = format!(
             "DELETE FROM graph_edges WHERE relation IN ({})",
             placeholders.join(", ")
@@ -280,17 +277,26 @@ mod tests {
         let db = Database::open_memory().unwrap();
 
         // same_project 엣지 3개 삽입
-        db.upsert_graph_node("session:s1", "session", "S1", None).unwrap();
-        db.upsert_graph_node("session:s2", "session", "S2", None).unwrap();
-        db.upsert_graph_node("session:s3", "session", "S3", None).unwrap();
-        db.upsert_graph_node("project:p1", "project", "P1", None).unwrap();
+        db.upsert_graph_node("session:s1", "session", "S1", None)
+            .unwrap();
+        db.upsert_graph_node("session:s2", "session", "S2", None)
+            .unwrap();
+        db.upsert_graph_node("session:s3", "session", "S3", None)
+            .unwrap();
+        db.upsert_graph_node("project:p1", "project", "P1", None)
+            .unwrap();
 
-        db.upsert_graph_edge("session:s1", "session:s2", "same_project", "EXTRACTED", 1.0).unwrap();
-        db.upsert_graph_edge("session:s2", "session:s3", "same_project", "EXTRACTED", 1.0).unwrap();
-        db.upsert_graph_edge("session:s1", "session:s3", "same_project", "EXTRACTED", 1.0).unwrap();
+        db.upsert_graph_edge("session:s1", "session:s2", "same_project", "EXTRACTED", 1.0)
+            .unwrap();
+        db.upsert_graph_edge("session:s2", "session:s3", "same_project", "EXTRACTED", 1.0)
+            .unwrap();
+        db.upsert_graph_edge("session:s1", "session:s3", "same_project", "EXTRACTED", 1.0)
+            .unwrap();
         // belongs_to 엣지 2개 삽입
-        db.upsert_graph_edge("session:s1", "project:p1", "belongs_to", "EXTRACTED", 1.0).unwrap();
-        db.upsert_graph_edge("session:s2", "project:p1", "belongs_to", "EXTRACTED", 1.0).unwrap();
+        db.upsert_graph_edge("session:s1", "project:p1", "belongs_to", "EXTRACTED", 1.0)
+            .unwrap();
+        db.upsert_graph_edge("session:s2", "project:p1", "belongs_to", "EXTRACTED", 1.0)
+            .unwrap();
 
         // same_project만 삭제
         let deleted = db.delete_relation_edges(&["same_project"]).unwrap();
@@ -321,8 +327,12 @@ mod tests {
         // session:s1 이웃 — 2개 (나가는 방향)
         let neighbors = db.get_neighbors("session:s1").unwrap();
         assert_eq!(neighbors.len(), 2);
-        assert!(neighbors.iter().any(|(id, _, d)| id == "project:p1" && d == "out"));
-        assert!(neighbors.iter().any(|(id, _, d)| id == "tool:Edit" && d == "out"));
+        assert!(neighbors
+            .iter()
+            .any(|(id, _, d)| id == "project:p1" && d == "out"));
+        assert!(neighbors
+            .iter()
+            .any(|(id, _, d)| id == "tool:Edit" && d == "out"));
 
         // project:p1 이웃 — 1개 (들어오는 방향)
         let nb = db.get_neighbors("project:p1").unwrap();

@@ -151,7 +151,13 @@ pub fn build_graph(
                 total_nodes += 1;
             }
             for edge in &result.edges {
-                db.upsert_graph_edge(&edge.source, &edge.target, &edge.relation, &edge.confidence, edge.weight)?;
+                db.upsert_graph_edge(
+                    &edge.source,
+                    &edge.target,
+                    &edge.relation,
+                    &edge.confidence,
+                    edge.weight,
+                )?;
                 total_edges += 1;
             }
         }
@@ -159,7 +165,13 @@ pub fn build_graph(
         // 세션 간 관계 엣지: 전체 vault 세션 대상으로 재계산 후 삽입
         let relation_edges = extract_session_relations(&all_frontmatters);
         for edge in &relation_edges {
-            db.upsert_graph_edge(&edge.source, &edge.target, &edge.relation, &edge.confidence, edge.weight)?;
+            db.upsert_graph_edge(
+                &edge.source,
+                &edge.target,
+                &edge.relation,
+                &edge.confidence,
+                edge.weight,
+            )?;
             total_edges += 1;
         }
 
@@ -234,18 +246,18 @@ mod tests {
 
         let r2 = build_graph(&db, vault_path, None, false).unwrap();
         assert_eq!(r2.sessions_processed, 1); // 신규 1개만 처리
-        assert_eq!(r2.sessions_skipped, 1);   // 기존 1개는 스킵
+        assert_eq!(r2.sessions_skipped, 1); // 기존 1개는 스킵
 
         // 기존(old001) ↔ 신규(new001) 간 same_project 엣지 존재 확인
         let old_neighbors = db.get_neighbors("session:old001").unwrap();
         let new_neighbors = db.get_neighbors("session:new001").unwrap();
 
-        let old_has_new = old_neighbors.iter().any(|(id, rel, _)| {
-            id == "session:new001" && rel == "same_project"
-        });
-        let new_has_old = new_neighbors.iter().any(|(id, rel, _)| {
-            id == "session:old001" && rel == "same_project"
-        });
+        let old_has_new = old_neighbors
+            .iter()
+            .any(|(id, rel, _)| id == "session:new001" && rel == "same_project");
+        let new_has_old = new_neighbors
+            .iter()
+            .any(|(id, rel, _)| id == "session:old001" && rel == "same_project");
 
         assert!(
             old_has_new || new_has_old,
@@ -294,9 +306,9 @@ mod tests {
 
         // A→C 엣지가 존재해야 함
         let a_neighbors_1 = db.get_neighbors("session:sess_a").unwrap();
-        let a_has_c = a_neighbors_1.iter().any(|(id, rel, _)| {
-            id == "session:sess_c" && rel == "same_project"
-        });
+        let a_has_c = a_neighbors_1
+            .iter()
+            .any(|(id, rel, _)| id == "session:sess_c" && rel == "same_project");
         assert!(a_has_c, "1회차: A→C same_project 엣지가 있어야 함");
 
         // 2회차: 중간 세션 B(04-10) 추가
@@ -308,15 +320,15 @@ mod tests {
         let a_neighbors_2 = db.get_neighbors("session:sess_a").unwrap();
         let b_neighbors_2 = db.get_neighbors("session:sess_b").unwrap();
 
-        let a_has_c_after = a_neighbors_2.iter().any(|(id, rel, _)| {
-            id == "session:sess_c" && rel == "same_project"
-        });
-        let a_has_b = a_neighbors_2.iter().any(|(id, rel, _)| {
-            id == "session:sess_b" && rel == "same_project"
-        });
-        let b_has_c = b_neighbors_2.iter().any(|(id, rel, _)| {
-            id == "session:sess_c" && rel == "same_project"
-        });
+        let a_has_c_after = a_neighbors_2
+            .iter()
+            .any(|(id, rel, _)| id == "session:sess_c" && rel == "same_project");
+        let a_has_b = a_neighbors_2
+            .iter()
+            .any(|(id, rel, _)| id == "session:sess_b" && rel == "same_project");
+        let b_has_c = b_neighbors_2
+            .iter()
+            .any(|(id, rel, _)| id == "session:sess_c" && rel == "same_project");
 
         assert!(!a_has_c_after, "2회차: A→C 엣지는 삭제되어야 함");
         assert!(a_has_b, "2회차: A→B 엣지가 있어야 함");
@@ -340,18 +352,18 @@ mod tests {
         write_session_md(vault_path, "new_sess", "2026-04-10", "proj1");
         let r2 = build_graph(&db, vault_path, Some("2026-04-10"), false).unwrap();
         assert_eq!(r2.sessions_processed, 1); // NEW만 full upsert
-        assert_eq!(r2.sessions_skipped, 1);   // OLD는 이미 처리됨
+        assert_eq!(r2.sessions_skipped, 1); // OLD는 이미 처리됨
 
         // 관계 계산은 OLD+NEW 전체 대상이므로 same_project 엣지 존재해야 함
         let old_neighbors = db.get_neighbors("session:old_sess").unwrap();
         let new_neighbors = db.get_neighbors("session:new_sess").unwrap();
 
-        let old_has_new = old_neighbors.iter().any(|(id, rel, _)| {
-            id == "session:new_sess" && rel == "same_project"
-        });
-        let new_has_old = new_neighbors.iter().any(|(id, rel, _)| {
-            id == "session:old_sess" && rel == "same_project"
-        });
+        let old_has_new = old_neighbors
+            .iter()
+            .any(|(id, rel, _)| id == "session:new_sess" && rel == "same_project");
+        let new_has_old = new_neighbors
+            .iter()
+            .any(|(id, rel, _)| id == "session:old_sess" && rel == "same_project");
 
         assert!(
             old_has_new || new_has_old,
@@ -386,12 +398,12 @@ mod tests {
         let old_neighbors = db.get_neighbors("session:old_sess").unwrap();
         let new_neighbors = db.get_neighbors("session:new_sess").unwrap();
 
-        let old_has_new = old_neighbors.iter().any(|(id, rel, _)| {
-            id == "session:new_sess" && rel == "same_project"
-        });
-        let new_has_old = new_neighbors.iter().any(|(id, rel, _)| {
-            id == "session:old_sess" && rel == "same_project"
-        });
+        let old_has_new = old_neighbors
+            .iter()
+            .any(|(id, rel, _)| id == "session:new_sess" && rel == "same_project");
+        let new_has_old = new_neighbors
+            .iter()
+            .any(|(id, rel, _)| id == "session:old_sess" && rel == "same_project");
 
         assert!(
             old_has_new || new_has_old,

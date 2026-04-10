@@ -8,7 +8,9 @@ use rmcp::{
 };
 
 use super::instructions::build_instructions;
-use super::tools::{GetParams, GraphQueryParams, QueryType, RecallParams, StatusParams, WikiSearchParams};
+use super::tools::{
+    GetParams, GraphQueryParams, QueryType, RecallParams, StatusParams, WikiSearchParams,
+};
 use crate::error::SecallError;
 use crate::search::bm25::{SearchFilters, SearchResult};
 use crate::search::hybrid::{diversify_by_session, parse_temporal_filter, SearchEngine};
@@ -370,11 +372,15 @@ impl SeCallMcpServer {
         &self,
         Parameters(params): Parameters<GraphQueryParams>,
     ) -> Result<CallToolResult, McpError> {
-        let db = self.db.lock().map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let db = self
+            .db
+            .lock()
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         let depth = params.depth.unwrap_or(1).min(3); // 최대 3홉
 
         // 1홉 이웃 조회
-        let neighbors = db.get_neighbors(&params.node_id)
+        let neighbors = db
+            .get_neighbors(&params.node_id)
             .map_err(|e| to_mcp_error(e))?;
 
         // relation 필터 적용
@@ -394,7 +400,9 @@ impl SeCallMcpServer {
             for _ in 1..depth {
                 let mut next_frontier = Vec::new();
                 for node in &frontier {
-                    if visited.contains(node) { continue; }
+                    if visited.contains(node) {
+                        continue;
+                    }
                     visited.insert(node.clone());
                     if let Ok(nb) = db.get_neighbors(node) {
                         let nb_filtered: Vec<_> = if let Some(ref rel) = params.relation {
@@ -413,13 +421,16 @@ impl SeCallMcpServer {
         }
 
         // 결과 JSON
-        let results: Vec<serde_json::Value> = all_neighbors.iter().map(|(id, rel, dir)| {
-            serde_json::json!({
-                "node_id": id,
-                "relation": rel,
-                "direction": dir,
+        let results: Vec<serde_json::Value> = all_neighbors
+            .iter()
+            .map(|(id, rel, dir)| {
+                serde_json::json!({
+                    "node_id": id,
+                    "relation": rel,
+                    "direction": dir,
+                })
             })
-        }).collect();
+            .collect();
 
         let count = results.len();
         let json = serde_json::json!({

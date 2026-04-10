@@ -71,7 +71,11 @@ impl<'a> VaultGit<'a> {
 
         self.run_git(&["init"])?;
         // `symbolic-ref`는 첫 커밋 전에도 동작하며 모든 git 버전과 호환됨.
-        self.run_git(&["symbolic-ref", "HEAD", &format!("refs/heads/{}", self.branch)])?;
+        self.run_git(&[
+            "symbolic-ref",
+            "HEAD",
+            &format!("refs/heads/{}", self.branch),
+        ])?;
         self.run_git(&["remote", "add", "origin", remote])?;
 
         // .gitignore — DB, 캐시, Obsidian 설정 제외
