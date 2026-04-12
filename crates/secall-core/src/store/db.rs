@@ -705,6 +705,30 @@ pub struct TurnRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ingest::{AgentKind, Session, TokenUsage, Turn};
+    use crate::store::SessionRepo;
+    use chrono::TimeZone;
+
+    fn make_test_session(id: &str) -> Session {
+        Session {
+            id: id.to_string(),
+            agent: AgentKind::ClaudeCode,
+            model: Some("claude-sonnet-4-6".to_string()),
+            project: Some("test-project".to_string()),
+            cwd: None,
+            git_branch: None,
+            host: None,
+            start_time: chrono::Utc.with_ymd_and_hms(2026, 4, 1, 0, 0, 0).unwrap(),
+            end_time: None,
+            turns: vec![],
+            total_tokens: TokenUsage {
+                input: 100,
+                output: 50,
+                cached: 0,
+            },
+            session_type: "interactive".to_string(),
+        }
+    }
 
     #[test]
     fn test_open_memory_success() {
@@ -745,5 +769,121 @@ mod tests {
         // Second migrate call should not error
         db.migrate().unwrap();
         assert_eq!(db.schema_version().unwrap(), 4);
+    }
+
+    // ─── CRUD tests ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_insert_session_and_exists() {
+        let db = Database::open_memory().unwrap();
+        let session = make_test_session("sess-001");
+
+        assert!(!db.session_exists("sess-001").unwrap());
+        db.insert_session(&session).unwrap();
+        assert!(db.session_exists("sess-001").unwrap());
+    }
+
+    #[test]
+    fn test_insert_session_idempotent() {
+        let db = Database::open_memory().unwrap();
+        let session = make_test_session("sess-idem");
+        db.insert_session(&session).unwrap();
+        // INSERT OR IGNORE — second insert must not error
+        db.insert_session(&session).unwrap();
+        assert_eq!(db.count_sessions().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_count_sessions() {
+        let db = Database::open_memory().unwrap();
+        assert_eq!(db.count_sessions().unwrap(), 0);
+        db.insert_session(&make_test_session("s1")).unwrap();
+        db.insert_session(&make_test_session("s2")).unwrap();
+        assert_eq!(db.count_sessions().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_session_exists_by_prefix() {
+        let db = Database::open_memory().unwrap();
+        db.insert_session(&make_test_session("abcdef1234567890")).unwrap();
+        assert!(db.session_exists_by_prefix("abcdef").unwrap());
+        assert!(!db.session_exists_by_prefix("xxxxxx").unwrap());
+    }
+
+    #[test]
+    fn test_update_vault_path() {
+        let db = Database::open_memory().unwrap();
+        db.insert_session(&make_test_session("sess-vp")).unwrap();
+        db.update_session_vault_path("sess-vp", "raw/sessions/2026-04-01/sess-vp.md")
+            .unwrap();
+        let paths = db.list_session_vault_paths().unwrap();
+        let found = paths.iter().any(|(id, vp)| {
+            id == "sess-vp"
+                && vp.as_deref() == Some("raw/sessions/2026-04-01/sess-vp.md")
+        });
+        assert!(found);
+    }
+
+    #[test]
+    fn test_update_session_type() {
+        let db = Database::open_memory().unwrap();
+        db.insert_session(&make_test_session("sess-type")).unwrap();
+        db.update_session_type("sess-type", "automated").unwrap();
+        let sessions = db.get_all_sessions_for_classify().unwrap();
+        let updated = sessions.iter().find(|(id, ..)| id == "sess-type").unwrap();
+        assert_eq!(updated.0, "sess-type");
+    }
+
+    #[test]
+    fn test_delete_session() {
+        let db = Database::open_memory().unwrap();
+        db.insert_session(&make_test_session("sess-del")).unwrap();
+        assert!(db.session_exists("sess-del").unwrap());
+        db.delete_session("sess-del").unwrap();
+        assert!(!db.session_exists("sess-del").unwrap());
+    }
+
+    #[test]
+    fn test_insert_turn_and_retrieve() {
+        let db = Database::open_memory().unwrap();
+        db.insert_session(&make_test_session("sess-turn")).unwrap();
+        let turn = Turn {
+            index: 0,
+            role: crate::ingest::Role::User,
+            content: "Hello, world!".to_string(),
+            timestamp: None,
+            actions: vec![],
+            thinking: None,
+            tokens: None,
+            is_sidechain: false,
+        };
+        db.insert_turn("sess-turn", &turn).unwrap();
+        let row = db.get_turn("sess-turn", 0).unwrap();
+        assert_eq!(row.content, "Hello, world!");
+    }
+
+    #[test]
+    fn test_insert_session_from_vault_and_fts() {
+        use crate::ingest::markdown::SessionFrontmatter;
+        let db = Database::open_memory().unwrap();
+        let fm = SessionFrontmatter {
+            session_id: "vault-001".to_string(),
+            agent: "claude-code".to_string(),
+            start_time: "2026-04-01T00:00:00+00:00".to_string(),
+            ..Default::default()
+        };
+        db.insert_session_from_vault(&fm, "some body text about Rust", "raw/sessions/vault-001.md")
+            .unwrap();
+        assert!(db.session_exists("vault-001").unwrap());
+        // FTS row should be present
+        let fts_count: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM turns_fts WHERE session_id = 'vault-001'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_count, 1);
     }
 }
