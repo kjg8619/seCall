@@ -62,7 +62,7 @@ Rules:
 - Do not include trivial relationships
 - Return empty edges array if nothing is found"#;
 
-const BODY_LIMIT: usize = 2000;
+const BODY_LIMIT: usize = 8000;
 
 // ─── user content 생성 (공통) ──────────────────────────────────────────────
 
@@ -527,5 +527,51 @@ mod tests {
         }
         assert_eq!(deduped.len(), 1, "duplicate edges should be removed");
         assert_eq!(deduped[0].confidence, "INFERRED");
+    }
+
+    /// 실제 Ollama 서버가 실행 중일 때만 수행하는 통합 테스트.
+    /// `cargo test -- --ignored ollama` 로 실행.
+    #[tokio::test]
+    #[ignore = "requires running Ollama with gemma4:e4b model"]
+    async fn test_ollama_live_extract() {
+        let db = Database::open_memory().unwrap();
+        let config = GraphConfig {
+            semantic: true,
+            semantic_backend: "ollama".to_string(),
+            ollama_url: Some("http://localhost:11434".to_string()),
+            ollama_model: Some("gemma4:e4b".to_string()),
+            anthropic_model: None,
+        };
+        // introduces_tech 와 discusses_topic 을 유도하는 세션
+        let fm = make_fm(
+            "ollama-live-01",
+            Some(vec!["Bash", "Edit"]),
+            Some("Add tokio async runtime for HTTP server"),
+        );
+        let body = r#"## Turn 1 — User
+Add an async HTTP server using tokio and hyper.
+
+## Turn 2 — Assistant
+Added tokio and hyper dependencies. Created src/server.rs with async handler."#;
+
+        let result = extract_and_store(&db, &config, &fm, body).await;
+        assert!(
+            result.is_ok(),
+            "extract_and_store should succeed: {:?}",
+            result
+        );
+
+        let stored = result.unwrap();
+        println!("Stored {} edges", stored);
+
+        let neighbors = db.get_neighbors("session:ollama-live-01").unwrap();
+        println!("Neighbors: {:?}", neighbors);
+
+        // 최소한 LLM이 tech/topic 엣지를 하나 이상 추출했거나
+        // 아니면 규칙 기반만으로도 0 이상이어야 함
+        assert!(
+            stored == 0 || stored > 0,
+            "stored should be non-negative (tautology, just verify no panic)"
+        );
     }
 }

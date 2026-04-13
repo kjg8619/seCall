@@ -14,6 +14,8 @@ pub struct BuildResult {
     pub edges_created: usize,
     pub sessions_processed: usize,
     pub sessions_skipped: usize,
+    /// 파일 읽기/파싱 실패로 건너뛴 세션 수
+    pub sessions_failed: usize,
 }
 
 /// 경로 세그먼트가 YYYY-MM-DD 형식의 날짜 디렉토리명인지 검증한다.
@@ -67,6 +69,7 @@ pub fn build_graph(
     let mut needs_minimal_node: Vec<bool> = Vec::new();
     let mut bodies: Vec<String> = Vec::new();
     let mut skipped = 0usize;
+    let mut failed = 0usize;
 
     for entry in &md_files {
         let path = entry.path();
@@ -75,6 +78,7 @@ pub fn build_graph(
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(path = %path.display(), error = %e, "failed to read session file");
+                failed += 1;
                 continue;
             }
         };
@@ -83,6 +87,7 @@ pub fn build_graph(
             Ok(f) => f,
             Err(e) => {
                 tracing::warn!(path = %path.display(), error = %e, "failed to parse frontmatter");
+                failed += 1;
                 continue;
             }
         };
@@ -220,6 +225,7 @@ pub fn build_graph(
         edges_created: total_edges,
         sessions_processed,
         sessions_skipped: skipped,
+        sessions_failed: failed,
     })
 }
 

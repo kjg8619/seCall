@@ -162,10 +162,15 @@ impl Default for GraphConfig {
 }
 
 /// 단일 세션 분류 규칙
+/// pattern 또는 project 중 하나 이상 지정해야 함.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ClassificationRule {
-    /// 첫 번째 user turn 내용에 매칭할 regex 패턴
-    pub pattern: String,
+    /// 첫 번째 user turn 내용에 매칭할 regex 패턴 (선택)
+    #[serde(default)]
+    pub pattern: Option<String>,
+    /// 세션의 project 필드와 정확히 일치할 프로젝트명 (선택)
+    #[serde(default)]
+    pub project: Option<String>,
     /// 매칭 시 부여할 session_type (예: "automated", "health_check")
     pub session_type: String,
 }
