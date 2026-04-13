@@ -1,4 +1,27 @@
+use std::sync::OnceLock;
+
+use regex::Regex;
+
 use crate::ingest::markdown::SessionFrontmatter;
+
+// ─── 컴파일된 정규식 (OnceLock) ───────────────────────────────────────────────
+
+fn re_issue_ref() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)(?:fixes|closes|resolves|issue|re:)?\s*#(\d+)").unwrap())
+}
+
+fn re_file_edit() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r">\s*\[!tool\]-\s*Edit\s+`([^`]+)`").unwrap())
+}
+
+fn re_tool_path() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r">\s*\[!tool\]-\s*(?:Edit|Write|Bash)[^\n]*\n>\s*```\n>\s*([^\n`]+)").unwrap()
+    })
+}
 
 #[derive(Debug, Clone)]
 pub struct GraphNode {
@@ -108,6 +131,84 @@ pub fn extract_from_frontmatter(fm: &SessionFrontmatter) -> ExtractionResult {
     }
 
     ExtractionResult { nodes, edges }
+}
+
+/// Rule-based 시맨틱 엣지 추출.
+///
+/// - `fixes_bug`: summary + body에서 `#N`, `fixes #N`, `closes #N` 등 이슈 참조 → `session → issue:N`
+/// - `modifies_file`: body의 FileEdit/ToolUse 렌더링에서 파일 경로 추출 → `session → file:path`
+///   단, frontmatter의 tools_used에 Edit 또는 Write가 없으면 modifies_file은 건너뜀.
+pub fn extract_semantic_edges(fm: &SessionFrontmatter, body: &str) -> Vec<GraphEdge> {
+    let mut edges = Vec::new();
+    let session_node_id = format!("session:{}", fm.session_id);
+
+    // ── fixes_bug ────────────────────────────────────────────────────────────
+    // summary + body 전체를 합쳐서 이슈 번호 스캔
+    let search_text = format!("{} {}", fm.summary.as_deref().unwrap_or(""), body);
+    let mut seen_issues = std::collections::HashSet::new();
+    for cap in re_issue_ref().captures_iter(&search_text) {
+        let issue_num = &cap[1];
+        if seen_issues.insert(issue_num.to_string()) {
+            edges.push(GraphEdge {
+                source: session_node_id.clone(),
+                target: format!("issue:{}", issue_num),
+                relation: "fixes_bug".to_string(),
+                confidence: "INFERRED".to_string(),
+                weight: 0.7,
+            });
+        }
+    }
+
+    // ── modifies_file ────────────────────────────────────────────────────────
+    // tools_used에 Edit 또는 Write가 있을 때만 파일 경로 스캔
+    let has_edit_write = fm
+        .tools_used
+        .as_ref()
+        .map(|tools| {
+            tools
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case("edit") || t.eq_ignore_ascii_case("write"))
+        })
+        .unwrap_or(false);
+
+    if has_edit_write {
+        let mut seen_files = std::collections::HashSet::new();
+
+        // FileEdit 렌더링: `> [!tool]- Edit \`path\``
+        for cap in re_file_edit().captures_iter(body) {
+            let path = cap[1].trim().to_string();
+            if !path.is_empty() && seen_files.insert(path.clone()) {
+                edges.push(GraphEdge {
+                    source: session_node_id.clone(),
+                    target: format!("file:{}", path),
+                    relation: "modifies_file".to_string(),
+                    confidence: "INFERRED".to_string(),
+                    weight: 0.9,
+                });
+            }
+        }
+
+        // ToolUse 블록 input_summary 첫 줄: Edit/Write 뒤 코드블록 첫 줄
+        for cap in re_tool_path().captures_iter(body) {
+            let path = cap[1].trim().to_string();
+            // 파일 경로처럼 보이는지 간단히 검증: '/' 또는 '\' 포함, 공백 없음
+            if !path.is_empty()
+                && (path.contains('/') || path.contains('\\'))
+                && !path.contains(' ')
+                && seen_files.insert(path.clone())
+            {
+                edges.push(GraphEdge {
+                    source: session_node_id.clone(),
+                    target: format!("file:{}", path),
+                    relation: "modifies_file".to_string(),
+                    confidence: "INFERRED".to_string(),
+                    weight: 0.9,
+                });
+            }
+        }
+    }
+
+    edges
 }
 
 /// 여러 세션 frontmatter 간 관계 추출 (same_project, same_day)
@@ -311,5 +412,99 @@ mod tests {
         // s1+s2만 같은 날 → 1개 엣지
         assert_eq!(same_day.len(), 1);
         assert!((same_day[0].weight - 0.5).abs() < f64::EPSILON);
+    }
+
+    // ─── extract_semantic_edges 테스트 ─────────────────────────────────────────
+
+    fn make_fm_with_summary(
+        id: &str,
+        tools: Option<Vec<&str>>,
+        summary: Option<&str>,
+    ) -> SessionFrontmatter {
+        SessionFrontmatter {
+            session_id: id.to_string(),
+            agent: "claude-code".to_string(),
+            model: None,
+            project: None,
+            cwd: None,
+            date: "2026-04-10".to_string(),
+            start_time: "2026-04-10T00:00:00Z".to_string(),
+            end_time: None,
+            turns: None,
+            tokens_in: None,
+            tokens_out: None,
+            tools_used: tools.map(|t| t.iter().map(|s| s.to_string()).collect()),
+            host: None,
+            status: None,
+            summary: summary.map(|s| s.to_string()),
+            session_type: None,
+        }
+    }
+
+    #[test]
+    fn test_semantic_fixes_bug_from_summary() {
+        let fm = make_fm_with_summary("abc12345", None, Some("fixes #42 and closes #99"));
+        let edges = extract_semantic_edges(&fm, "");
+        let issues: Vec<_> = edges.iter().filter(|e| e.relation == "fixes_bug").collect();
+        assert_eq!(issues.len(), 2, "summary에서 2개 이슈를 추출해야 함");
+        assert!(issues.iter().any(|e| e.target == "issue:42"));
+        assert!(issues.iter().any(|e| e.target == "issue:99"));
+        assert_eq!(issues[0].confidence, "INFERRED");
+        assert!((issues[0].weight - 0.7).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_semantic_fixes_bug_from_body() {
+        let fm = make_fm_with_summary("abc12345", None, None);
+        let body = "## Turn 1 — User\n\nPlease resolve #7\n\n## Turn 2 — Assistant\n\nI will fix issue #7.";
+        let edges = extract_semantic_edges(&fm, body);
+        let issues: Vec<_> = edges.iter().filter(|e| e.relation == "fixes_bug").collect();
+        // #7이 2번 언급되지만 중복 제거
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].target, "issue:7");
+    }
+
+    #[test]
+    fn test_semantic_no_issues_if_empty() {
+        let fm = make_fm_with_summary("abc12345", None, None);
+        let edges = extract_semantic_edges(&fm, "some body without issues");
+        assert!(edges.iter().all(|e| e.relation != "fixes_bug"));
+    }
+
+    #[test]
+    fn test_semantic_modifies_file_from_file_edit() {
+        let fm = make_fm_with_summary("abc12345", Some(vec!["Edit"]), None);
+        let body = "> [!tool]- Edit `crates/secall-core/src/lib.rs`\n\n";
+        let edges = extract_semantic_edges(&fm, body);
+        let files: Vec<_> = edges
+            .iter()
+            .filter(|e| e.relation == "modifies_file")
+            .collect();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].target, "file:crates/secall-core/src/lib.rs");
+        assert_eq!(files[0].confidence, "INFERRED");
+        assert!((files[0].weight - 0.9).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_semantic_modifies_file_dedup() {
+        let fm = make_fm_with_summary("abc12345", Some(vec!["Edit"]), None);
+        // 같은 파일을 두 번 편집
+        let body = "> [!tool]- Edit `src/main.rs`\n\n> [!tool]- Edit `src/main.rs`\n\n";
+        let edges = extract_semantic_edges(&fm, body);
+        let files: Vec<_> = edges
+            .iter()
+            .filter(|e| e.relation == "modifies_file")
+            .collect();
+        assert_eq!(files.len(), 1, "동일 파일은 중복 제거");
+    }
+
+    #[test]
+    fn test_semantic_modifies_file_skipped_without_edit_tool() {
+        // tools_used에 Edit/Write 없으면 modifies_file 추출 안 함
+        let fm = make_fm_with_summary("abc12345", Some(vec!["Read", "Bash"]), None);
+        let body = "> [!tool]- Edit `src/main.rs`\n\n";
+        let edges = extract_semantic_edges(&fm, body);
+        assert!(edges.iter().all(|e| e.relation != "modifies_file"));
     }
 }
