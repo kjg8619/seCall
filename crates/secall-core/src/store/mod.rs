@@ -8,6 +8,7 @@ pub mod session_repo;
 pub mod vector_repo;
 
 pub use db::Database;
+pub use graph_repo::RelatedSession;
 pub use search_repo::SearchRepo;
 pub use session_repo::SessionRepo;
 pub use vector_repo::VectorRepo;
