@@ -93,6 +93,9 @@
 - P18 Rev.2 — 세션 분류 regex 사전 컴파일 및 에러 전파
 - P22 Rev.2 — Wiki 파이프라인 (Haiku 생성, lint, review + auto-retry)
 - Semantic graph extraction — 694세션 완료 (348 skipped, 0 failed)
+- P23 — Store/Search 모듈 경계 리팩토링 (search 모듈에서 SQL 분리)
+- P24 — GitHub 이슈 일괄 수정 (#19 timezone, #21 local-only, #22 compact turn, #23 FTS5 중복)
+- PR #20 — OpenVINO embedding backend (외부 기여, CoLuthien)
 
 ### In Progress
 - (none)
@@ -106,6 +109,15 @@
 
 1. (P1) Wiki 파이프라인 실행 검증 — 소규모(10~20세션) dry-run으로 end-to-end 동작 확인. API 비용 수반.
 2. (P1) Semantic graph 활용 — 추출된 694세션 edge 데이터를 검색/탐색에 반영하는 기능 설계. 별도 플랜 필요.
+
+---
+
+## 9. Git Workflow
+
+- 새 기능/수정은 **feature branch**에서 작업 → PR → merge 패턴을 따름
+- 브랜치명: `feat/p25-wiki-dryrun`, `fix/issue-name` 등
+- PR에서 관련 이슈 자동 close: `Fixes #19, #21` 등 사용
+- 외부 기여 PR은 리뷰 후 필요 시 직접 수정 커밋 추가 → merge → 코멘트
 
 <!-- tunaflow:context-start -->
 Project: /Users/d9ng/privateProject/seCall
