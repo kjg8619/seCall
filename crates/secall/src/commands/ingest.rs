@@ -362,7 +362,12 @@ pub async fn ingest_sessions(
     }
 
     // 시맨틱 엣지 추출 (graph build 경유 아닌 ingest 직접 연동)
-    if config.graph.semantic && !no_semantic && !new_session_ids.is_empty() {
+    let semantic_enabled = config.graph.semantic
+        && config.graph.semantic_backend != "disabled"
+        && config.embedding.backend != "none"
+        && !no_semantic
+        && !new_session_ids.is_empty();
+    if semantic_enabled {
         // 임베딩 모델(bge-m3)이 Ollama에 로드되어 있으면 언로드하여
         // gemma4와 동시 로드로 인한 메모리 압박 방지 (16GB 시스템 대응)
         if config.embedding.backend == "ollama" && config.graph.semantic_backend == "ollama" {

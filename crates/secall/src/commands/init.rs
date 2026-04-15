@@ -164,6 +164,11 @@ fn run_interactive() -> Result<()> {
     } else {
         "none".to_string()
     };
+    // BM25-only 선택 시 시맨틱 그래프 추출도 비활성화
+    if config.embedding.backend == "none" {
+        config.graph.semantic = false;
+        println!("  → BM25만 사용: 시맨틱 그래프 추출도 비활성화됩니다.");
+    }
     println!();
 
     // Step 6: Ollama 확인 (ollama 선택 시만)
