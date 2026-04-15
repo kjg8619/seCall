@@ -11,7 +11,7 @@ AIエージェントとのすべての会話を検索しましょう。
 
 <br/>
 
-[**`한국어`**](README.md) · [**`English`**](README.md#en) · **`日本語`** · [**`中文`**](README.zh.md)
+[**`한국어`**](README.md) · [**`English`**](README.en.md) · **`日本語`** · [**`中文`**](README.zh.md)
 
 </div>
 
@@ -60,12 +60,31 @@ vault/
 
 ### Knowledge Graph
 
-セッション間の関係を決定的に抽出してナレッジグラフを構築します（LLM呼び出し不要）:
+セッション間の関係を抽出してナレッジグラフを構築します:
 
 - **ノードタイプ**: session, project, agent, tool — frontmatterから自動抽出
-- **エッジタイプ**: `belongs_to`, `by_agent`, `uses_tool`, `same_project`, `same_day`
+- **ルールベースエッジ**: `belongs_to`, `by_agent`, `uses_tool`, `same_project`, `same_day`（LLM不要）
+- **セマンティックエッジ**（Gemini/Ollama）: `fixes_bug`, `modifies_file`, `introduces_tech`, `discusses_topic` — LLMがセッション内容を分析して抽出
 - **増分ビルド**: 新規セッションのみノード追加、関係エッジは全体再計算
 - **MCPツール**: `graph_query` — AIエージェントがセッション間関係を探索（BFS、最大3ホップ）
+
+### REST API + Obsidianプラグイン
+
+REST APIサーバーと専用Obsidianプラグインでセッションをブラウズ:
+
+```bash
+# REST APIサーバー起動
+secall serve --port 8080
+```
+
+**エンドポイント**: `/api/recall`, `/api/get`, `/api/status`, `/api/daily`, `/api/graph`
+
+**Obsidianプラグイン** (`obsidian-secall/`):
+- **検索ビュー** — キーワード/セマンティックセッション検索
+- **デイリービュー** — 日付別作業サマリー、プロジェクト別グルーピング、ノート作成
+- **グラフビュー** — ノード関係探索（depth 1-3、関係フィルター）
+- **セッションビュー** — フルマークダウンレンダリング
+- **ステータスバー** — セッション数 + エンベディング状態（5分更新）
 
 ### MCPサーバー
 
@@ -179,7 +198,10 @@ secall config set embedding.backend ollama
 | `secall config show\|set\|path` | 設定の確認/変更 |
 | `secall graph build\|stats\|export` | Knowledge Graph管理 |
 | `secall wiki update\|status` | Wiki生成/状態確認 |
+| `secall log [YYYY-MM-DD]` | 日別作業日記生成 |
+| `secall serve [--port <port>]` | REST APIサーバー起動（デフォルト: 8080） |
 | `secall mcp [--http <addr>]` | MCPサーバー起動 |
+| `secall classify [--dry-run]` | 設定ルールで既存セッションを一括再分類 |
 | `secall lint` | 整合性検証 |
 
 ## MCP連携
@@ -205,8 +227,11 @@ Claude Code設定（`~/.claude/settings.json`）に追加:
 | データベース | SQLite + FTS5 |
 | NLP | Lindera ko-dic + Kiwi-rs (macOS/Linux) |
 | エンベディング | Ollama BGE-M3 (1024次元) / ONNX Runtime |
+| REST API | axum（CORS対応） |
 | MCPサーバー | rmcp (stdio + HTTP) |
 | ボールト | Obsidian互換 Markdown |
+| Wikiエンジン | Claude Code / Ollama / LM Studio / Codex CLI / Gemini（プラグイン方式） |
+| Obsidianプラグイン | obsidian-secall (TypeScript, esbuild) |
 
 ## 出典
 

@@ -11,7 +11,7 @@
 
 <br/>
 
-[**`한국어`**](README.md) · [**`English`**](README.md#en) · [**`日本語`**](README.ja.md) · **`中文`**
+[**`한국어`**](README.md) · [**`English`**](README.en.md) · [**`日本語`**](README.ja.md) · **`中文`**
 
 </div>
 
@@ -60,12 +60,31 @@ vault/
 
 ### Knowledge Graph
 
-确定性地提取会话间关系来构建知识图谱（无需 LLM 调用）:
+提取会话间关系来构建知识图谱:
 
 - **节点类型**: session, project, agent, tool — 从 frontmatter 自动提取
-- **边类型**: `belongs_to`, `by_agent`, `uses_tool`, `same_project`, `same_day`
+- **规则边**: `belongs_to`, `by_agent`, `uses_tool`, `same_project`, `same_day`（无需 LLM）
+- **语义边**（Gemini/Ollama）: `fixes_bug`, `modifies_file`, `introduces_tech`, `discusses_topic` — LLM 分析会话内容提取
 - **增量构建**: 仅添加新会话节点，关系边全量重新计算以保证准确性
 - **MCP 工具**: `graph_query` — AI 代理可探索会话间关系（BFS，最多3跳）
+
+### REST API + Obsidian 插件
+
+通过 REST API 服务器和专用 Obsidian 插件浏览会话:
+
+```bash
+# 启动 REST API 服务器
+secall serve --port 8080
+```
+
+**端点**: `/api/recall`, `/api/get`, `/api/status`, `/api/daily`, `/api/graph`
+
+**Obsidian 插件** (`obsidian-secall/`):
+- **搜索视图** — 关键词/语义会话搜索
+- **日报视图** — 按日期汇总工作，按项目分组，创建笔记
+- **图谱视图** — 探索节点关系（depth 1-3，关系过滤）
+- **会话视图** — 完整 Markdown 渲染
+- **状态栏** — 会话数 + 嵌入状态（每5分钟刷新）
 
 ### MCP 服务器
 
@@ -179,7 +198,10 @@ secall config set embedding.backend ollama
 | `secall config show\|set\|path` | 查看/修改配置 |
 | `secall graph build\|stats\|export` | Knowledge Graph 管理 |
 | `secall wiki update\|status` | Wiki 生成/状态 |
+| `secall log [YYYY-MM-DD]` | 生成每日工作日记 |
+| `secall serve [--port <port>]` | 启动 REST API 服务器（默认: 8080） |
 | `secall mcp [--http <addr>]` | 启动 MCP 服务器 |
+| `secall classify [--dry-run]` | 按规则批量重新分类现有会话 |
 | `secall lint` | 一致性验证 |
 
 ## MCP 集成
@@ -205,8 +227,11 @@ secall config set embedding.backend ollama
 | 数据库 | SQLite + FTS5 |
 | NLP | Lindera ko-dic + Kiwi-rs (macOS/Linux) |
 | 嵌入 | Ollama BGE-M3 (1024维) / ONNX Runtime |
+| REST API | axum（支持 CORS） |
 | MCP 服务器 | rmcp (stdio + HTTP) |
 | 知识库 | Obsidian 兼容 Markdown |
+| Wiki 引擎 | Claude Code / Ollama / LM Studio / Codex CLI / Gemini（插件式后端） |
+| Obsidian 插件 | obsidian-secall (TypeScript, esbuild) |
 
 ## 参考
 

@@ -1,4 +1,4 @@
-<!-- Thanks to: @batmania52, @yeonsh, @missflash -->
+<!-- Thanks to: @batmania52, @yeonsh, @missflash, @CoLuthien, @dev-minsoo -->
 
 <div align="center">
 
@@ -13,7 +13,7 @@ AI 에이전트와 나눈 모든 대화를 검색하세요.
 [![MCP](https://img.shields.io/badge/MCP-Protocol-5A67D8?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0Ij48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIxMCIgZmlsbD0id2hpdGUiLz48L3N2Zz4=)](https://modelcontextprotocol.io/)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![ONNX Runtime](https://img.shields.io/badge/ONNX-Runtime-007CFF?logo=onnx&logoColor=white)](https://onnxruntime.ai/)
-[![Obsidian](https://img.shields.io/badge/Obsidian-Vault-7C3AED?logo=obsidian&logoColor=white)](https://obsidian.md/)
+[![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED?logo=obsidian&logoColor=white)](https://obsidian.md/)
 
 <br/>
 
@@ -36,6 +36,7 @@ AI 에이전트와 나눈 모든 대화를 검색하세요.
   - [Hybrid Search](#hybrid-search)
   - [Knowledge Vault](#knowledge-vault)
   - [Knowledge Graph](#knowledge-graph)
+  - [REST API + Obsidian Plugin](#rest-api--obsidian-plugin)
   - [MCP Server](#mcp-server)
   - [Multi-Device Vault Sync](#multi-device-vault-sync)
   - [Data Integrity](#data-integrity)
@@ -50,6 +51,7 @@ AI 에이전트와 나눈 모든 대화를 검색하세요.
   - [Build Embeddings](#build-embeddings)
   - [Session Classification](#session-classification)
   - [Generate Wiki](#generate-wiki)
+  - [Daily Work Log](#daily-work-log)
   - [Knowledge Graph](#knowledge-graph-1)
 - [Configuration](#configuration)
   - [Available Keys](#available-keys)
@@ -117,12 +119,31 @@ vault/
 
 ### Knowledge Graph
 
-Deterministically extract relationships between sessions to build a knowledge graph (no LLM calls needed):
+Extract relationships between sessions to build a knowledge graph:
 
 - **Node types**: session, project, agent, tool — auto-extracted from frontmatter
-- **Edge types**: `belongs_to`, `by_agent`, `uses_tool`, `same_project`, `same_day`
+- **Rule-based edges**: `belongs_to`, `by_agent`, `uses_tool`, `same_project`, `same_day` (no LLM needed)
+- **Semantic edges** (Gemini/Ollama): `fixes_bug`, `modifies_file`, `introduces_tech`, `discusses_topic` — LLM analyzes session content
 - **Incremental builds**: new sessions get nodes added; relation edges are fully recomputed for accuracy
 - **MCP tool**: `graph_query` — AI agents can explore session relationships (BFS, max 3 hops)
+
+### REST API + Obsidian Plugin
+
+Browse sessions from a REST API server and a dedicated Obsidian plugin:
+
+```bash
+# Start REST API server
+secall serve --port 8080
+```
+
+**Endpoints**: `/api/recall`, `/api/get`, `/api/status`, `/api/daily`, `/api/graph`
+
+**Obsidian Plugin** (`obsidian-secall/`):
+- **Search View** — keyword/semantic session search
+- **Daily View** — daily work summary grouped by project, with note creation
+- **Graph View** — explore node relationships (depth 1-3, relation filters)
+- **Session View** — full markdown rendering
+- **Status bar** — session count + embedding status (refreshes every 5 min)
 
 ### MCP Server
 
@@ -307,6 +328,12 @@ secall wiki update --backend codex
 secall wiki update --backend ollama
 secall wiki update --backend lmstudio
 
+# Codex CLI backend
+secall wiki update --backend codex
+
+# Gemini backend
+secall wiki update --backend gemini
+
 # Incremental update for one session
 secall wiki update --backend lmstudio --session <id>
 
@@ -318,7 +345,7 @@ Configure the default backend in `config.toml`:
 
 ```toml
 [wiki]
-default_backend = "lmstudio"   # "claude" | "codex" | "ollama" | "lmstudio"
+default_backend = "lmstudio"   # "claude" | "codex" | "ollama" | "lmstudio" | "gemini"
 
 [wiki.backends.lmstudio]
 api_url = "http://localhost:1234"
@@ -329,6 +356,22 @@ max_tokens = 3000
 api_url = "http://localhost:11434"
 model = "gemma3:27b"
 ```
+
+### Daily Work Log
+
+Generate daily work diaries automatically:
+
+```bash
+# Generate for today
+secall log
+
+# Specify a date
+secall log 2026-04-15
+```
+
+- Groups sessions by project, extracts topic nodes from Knowledge Graph
+- Uses Ollama/Gemini LLM for prose summary (falls back to template without LLM)
+- Saves to `vault/log/{date}.md`
 
 ### Knowledge Graph
 
@@ -374,7 +417,9 @@ secall config path
 | `output.timezone` | Timezone (IANA) | `UTC` |
 | `ingest.classification.default` | Default session_type when no rule matches | `interactive` |
 | `ingest.classification.skip_embed_types` | Session types to skip vector embedding | `[]` |
-| `wiki.default_backend` | Wiki generation backend (`claude` / `codex` / `ollama` / `lmstudio`) | `claude` |
+| `graph.semantic_backend` | Semantic edge extraction backend (`gemini` / `ollama` / `none`) | `none` |
+| `graph.gemini_model` | Gemini model name | `gemini-2.5-flash` |
+| `wiki.default_backend` | Wiki generation backend (`claude` / `codex` / `ollama` / `lmstudio` / `gemini`) | `claude` |
 | `wiki.backends.<name>.api_url` | Backend API endpoint | (default) |
 | `wiki.backends.<name>.model` | Model name for the backend | (default) |
 | `wiki.backends.<name>.max_tokens` | Max tokens to generate | `4096` |
@@ -401,8 +446,10 @@ Config file location:
 | `secall mcp [--http <addr>]` | Start MCP server |
 | `secall config show\|set\|path` | View/change settings |
 | `secall graph build\|stats\|export` | Knowledge graph management |
-| `secall wiki update [--backend claude\|codex\|ollama\|lmstudio]` | Wiki generation with backend selection |
+| `secall wiki update [--backend claude\|codex\|ollama\|lmstudio\|gemini]` | Wiki generation with backend selection |
 | `secall wiki status` | Wiki status |
+| `secall log [YYYY-MM-DD]` | Generate daily work diary |
+| `secall serve [--port <port>]` | Start REST API server (default: 8080) |
 | `secall model download\|info\|check` | ONNX model management |
 | `secall reindex --from-vault` | Rebuild DB from vault |
 | `secall migrate summary` | Backfill summary frontmatter |
@@ -493,7 +540,9 @@ For auto-sync on session start/end:
 | ANN Index | usearch HNSW (macOS/Linux) |
 | MCP Server | rmcp (stdio + Streamable HTTP via axum) |
 | Vault | Obsidian-compatible Markdown |
-| Wiki Engine | Claude Code / Codex / Ollama / LM Studio (pluggable backends) |
+| REST API | axum (with CORS) |
+| Wiki Engine | Claude Code / Codex CLI / Ollama / LM Studio / Gemini (pluggable backends) |
+| Obsidian Plugin | obsidian-secall (TypeScript, esbuild) |
 
 ## Acknowledgments
 
@@ -513,6 +562,8 @@ This project was developed using AI coding agents (Claude Code, Codex) orchestra
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-04-15 | v0.3.2 | Gemini API backend (semantic graph + diary), Codex wiki backend (PR #29), REST API server (`secall serve`), Obsidian plugin (search/daily/graph views), daily work log (`secall log`), semantic edges (`fixes_bug`, `modifies_file`, `introduces_tech`, `discusses_topic`), auto-disable graph semantic in BM25-only mode (#25) |
+| 2026-04-12 | v0.3.1 | `secall lint --fix` stale DB cleanup (#15), `wiki_search` created/updated fields (#13), P20 test coverage (+16 tests) |
 | 2026-04-12 | v0.3.0 | Session classification (regex rules, `secall classify`), wiki pluggable backends (Ollama, LM Studio), `--include-automated` flag |
 | 2026-04-10 | P17 | Interactive onboarding (`secall init` wizard), `secall config` CLI, git branch configuration |
 | 2026-04-10 | P16 | Knowledge Graph — deterministic graph extraction from frontmatter, `secall graph build/stats/export`, MCP `graph_query`, sync Phase 3.7 |

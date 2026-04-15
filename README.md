@@ -1,4 +1,4 @@
-<!-- Thanks to: @batmania52, @yeonsh, @missflash -->
+<!-- Thanks to: @batmania52, @yeonsh, @missflash, @CoLuthien, @dev-minsoo -->
 
 <div align="center">
 
@@ -13,7 +13,7 @@ AI 에이전트와 나눈 모든 대화를 검색하세요.
 [![MCP](https://img.shields.io/badge/MCP-Protocol-5A67D8?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0Ij48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIxMCIgZmlsbD0id2hpdGUiLz48L3N2Zz4=)](https://modelcontextprotocol.io/)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![ONNX Runtime](https://img.shields.io/badge/ONNX-Runtime-007CFF?logo=onnx&logoColor=white)](https://onnxruntime.ai/)
-[![Obsidian](https://img.shields.io/badge/Obsidian-Vault-7C3AED?logo=obsidian&logoColor=white)](https://obsidian.md/)
+[![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED?logo=obsidian&logoColor=white)](https://obsidian.md/)
 
 <br/>
 
@@ -31,6 +31,7 @@ AI 에이전트와 나눈 모든 대화를 검색하세요.
   - [하이브리드 검색](#하이브리드-검색)
   - [지식 볼트](#지식-볼트)
   - [Knowledge Graph](#knowledge-graph)
+  - [REST API + Obsidian 플러그인](#rest-api--obsidian-플러그인)
   - [MCP 서버](#mcp-서버)
   - [멀티 기기 볼트 동기화](#멀티-기기-볼트-동기화)
   - [데이터 무결성](#데이터-무결성)
@@ -45,6 +46,7 @@ AI 에이전트와 나눈 모든 대화를 검색하세요.
   - [임베딩 생성](#임베딩-생성)
   - [세션 분류](#세션-분류)
   - [위키 생성](#위키-생성)
+  - [작업 일기](#작업-일기)
   - [Knowledge Graph](#knowledge-graph-1)
 - [설정](#설정)
   - [설정 키 목록](#설정-키-목록)
@@ -116,12 +118,31 @@ vault/
 
 ### Knowledge Graph
 
-세션 간 관계를 결정적으로 추출하여 지식 그래프를 구축합니다 (LLM 호출 불필요):
+세션 간 관계를 추출하여 지식 그래프를 구축합니다:
 
 - **노드 타입**: session, project, agent, tool — frontmatter에서 자동 추출
-- **엣지 타입**: `belongs_to`, `by_agent`, `uses_tool`, `same_project`, `same_day`
+- **규칙 기반 엣지**: `belongs_to`, `by_agent`, `uses_tool`, `same_project`, `same_day` (LLM 불필요)
+- **시맨틱 엣지** (Gemini/Ollama): `fixes_bug`, `modifies_file`, `introduces_tech`, `discusses_topic` — LLM이 세션 내용을 분석하여 추출
 - **증분 빌드**: 신규 세션만 노드 추가, 관계 엣지는 전체 재계산으로 정확성 보장
 - **MCP 도구**: `graph_query` — AI 에이전트가 세션 간 관계를 탐색 (BFS, 최대 3홉)
+
+### REST API + Obsidian 플러그인
+
+REST API 서버와 전용 Obsidian 플러그인으로 브라우저에서 세션을 탐색합니다:
+
+```bash
+# REST API 서버 시작
+secall serve --port 8080
+```
+
+**엔드포인트**: `/api/recall`, `/api/get`, `/api/status`, `/api/daily`, `/api/graph`
+
+**Obsidian 플러그인** (`obsidian-secall/`):
+- **검색 뷰** — 키워드/시맨틱 세션 검색
+- **데일리 뷰** — 날짜별 작업 요약, 프로젝트별 세션 그룹핑, 노트 생성
+- **그래프 뷰** — 노드 관계 탐색 (depth 1-3, 관계 필터)
+- **세션 뷰** — 전체 마크다운 렌더링
+- **상태바** — 세션 수 + 임베딩 상태 표시 (5분 갱신)
 
 ### MCP 서버
 
@@ -310,6 +331,12 @@ secall wiki update --backend codex
 secall wiki update --backend ollama
 secall wiki update --backend lmstudio
 
+# Codex CLI 백엔드
+secall wiki update --backend codex
+
+# Gemini 백엔드
+secall wiki update --backend gemini
+
 # 특정 세션만 증분 업데이트
 secall wiki update --backend lmstudio --session <id>
 
@@ -321,7 +348,7 @@ secall wiki status
 
 ```toml
 [wiki]
-default_backend = "lmstudio"   # "claude" | "codex" | "ollama" | "lmstudio"
+default_backend = "lmstudio"   # "claude" | "codex" | "ollama" | "lmstudio" | "gemini"
 
 [wiki.backends.lmstudio]
 api_url = "http://localhost:1234"
@@ -335,6 +362,22 @@ model = "gemma3:27b"
 [wiki.backends.claude]
 model = "sonnet"   # "opus" 도 가능
 ```
+
+### 작업 일기
+
+날짜별 작업 일기를 자동으로 생성합니다:
+
+```bash
+# 오늘 날짜 일기 생성
+secall log
+
+# 특정 날짜 지정
+secall log 2026-04-15
+```
+
+- 프로젝트별로 세션을 그룹핑하고, 토픽 노드를 Knowledge Graph에서 추출
+- Ollama/Gemini LLM으로 산문 정리 (LLM 미설정 시 템플릿 fallback)
+- 결과를 `vault/log/{date}.md`에 저장
 
 ### Knowledge Graph
 
@@ -380,7 +423,9 @@ secall config path
 | `output.timezone` | 타임존 (IANA) | `UTC` |
 | `ingest.classification.default` | 분류 규칙 미매칭 시 기본 session_type | `interactive` |
 | `ingest.classification.skip_embed_types` | 임베딩을 스킵할 session_type 목록 | `[]` |
-| `wiki.default_backend` | 위키 생성 백엔드 (`claude` / `codex` / `ollama` / `lmstudio`) | `claude` |
+| `graph.semantic_backend` | 시맨틱 엣지 추출 백엔드 (`gemini` / `ollama` / `none`) | `none` |
+| `graph.gemini_model` | Gemini 모델 이름 | `gemini-2.5-flash` |
+| `wiki.default_backend` | 위키 생성 백엔드 (`claude` / `codex` / `ollama` / `lmstudio` / `gemini`) | `claude` |
 | `wiki.backends.<name>.api_url` | 백엔드 API 엔드포인트 | (기본값 사용) |
 | `wiki.backends.<name>.model` | 백엔드 모델 이름 | (기본값 사용) |
 | `wiki.backends.<name>.max_tokens` | 최대 생성 토큰 수 | `4096` |
@@ -407,8 +452,10 @@ secall config path
 | `secall mcp [--http <addr>]` | MCP 서버 시작 |
 | `secall config show\|set\|path` | 설정 확인/변경 |
 | `secall graph build\|stats\|export` | Knowledge Graph 관리 |
-| `secall wiki update [--backend claude\|codex\|ollama\|lmstudio]` | 위키 생성 (백엔드 선택 가능) |
+| `secall wiki update [--backend claude\|codex\|ollama\|lmstudio\|gemini]` | 위키 생성 (백엔드 선택 가능) |
 | `secall wiki status` | 위키 상태 확인 |
+| `secall log [YYYY-MM-DD]` | 날짜별 작업 일기 생성 |
+| `secall serve [--port <port>]` | REST API 서버 시작 (기본: 8080) |
 | `secall model download\|info\|check` | ONNX 모델 관리 |
 | `secall reindex --from-vault` | 볼트에서 DB 재구축 |
 | `secall migrate summary` | summary frontmatter 일괄 추가 |
@@ -499,7 +546,9 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 | ANN 인덱스 | usearch HNSW (macOS/Linux) |
 | MCP 서버 | rmcp (stdio + Streamable HTTP / axum) |
 | 볼트 | Obsidian 호환 Markdown |
-| 위키 엔진 | Claude Code / Codex / Ollama / LM Studio (플러그인 방식 백엔드) |
+| REST API | axum (CORS 지원) |
+| 위키 엔진 | Claude Code / Codex CLI / Ollama / LM Studio / Gemini (플러그인 방식 백엔드) |
+| Obsidian 플러그인 | obsidian-secall (TypeScript, esbuild) |
 
 ## 출처
 
@@ -519,6 +568,7 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 
 | 날짜 | 버전 | 변경사항 |
 |------|------|---------|
+| 2026-04-15 | v0.3.2 | Gemini API 백엔드 (시맨틱 그래프 + 일기 생성), Codex wiki 백엔드 (PR #29), REST API 서버 (`secall serve`), Obsidian 플러그인 (검색/데일리/그래프 뷰), 작업 일기 (`secall log`), 시맨틱 엣지 (`fixes_bug`, `modifies_file`, `introduces_tech`, `discusses_topic`), BM25-only 모드 시 graph semantic 자동 비활성화 (#25) |
 | 2026-04-12 | v0.3.1 | `secall lint --fix` stale DB 정리 (#15), `wiki_search` created/updated 필드 (#13), P20 테스트 커버리지 강화 (+16 tests) |
 | 2026-04-12 | v0.3.0 | 세션 분류 (regex 규칙, `secall classify`), 위키 플러그인 백엔드 (Ollama, LM Studio), `--include-automated` 플래그 |
 | 2026-04-10 | P17 | 대화형 온보딩 (`secall init` 위저드), `secall config` CLI, git 브랜치 설정 |
