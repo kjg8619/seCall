@@ -5,6 +5,16 @@ use crate::ingest::{Session, Turn};
 use crate::search::bm25::SessionMeta;
 use crate::store::db::{Database, SessionMeta as WikiSessionMeta, TurnRow};
 
+/// (id, project, summary, turn_count, tools_used, session_type)
+pub type DailySessionRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+    Option<String>,
+    String,
+);
+
 pub trait SessionRepo {
     fn insert_session(&self, session: &Session) -> Result<()>;
     fn update_session_vault_path(&self, session_id: &str, vault_path: &str) -> Result<()>;
@@ -553,16 +563,7 @@ impl Database {
     pub fn get_sessions_for_date(
         &self,
         date: &str, // "YYYY-MM-DD"
-    ) -> Result<
-        Vec<(
-            String,
-            Option<String>,
-            Option<String>,
-            i64,
-            Option<String>,
-            String,
-        )>,
-    > {
+    ) -> Result<Vec<DailySessionRow>> {
         let pattern = format!("{}%", date);
         let mut stmt = self.conn().prepare(
             "SELECT id, project, summary, turn_count, tools_used, session_type

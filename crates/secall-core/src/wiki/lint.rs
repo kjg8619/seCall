@@ -448,7 +448,7 @@ mod tests {
         let content = "Session 86b9d1fa was interesting";
         let sid = "86b9d1fa-fccf-4e4c-b562-b1258be431e2".to_string();
         let vault_paths = std::collections::HashMap::new(); // 빈 맵
-        let result = insert_obsidian_links(content, &[sid.clone()], &vault_paths, &[]);
+        let result = insert_obsidian_links(content, std::slice::from_ref(&sid), &vault_paths, &[]);
         // vault_path 없으면 full UUID를 링크 타깃으로
         assert!(result.contains(&format!("[[{}|86b9d1fa]]", sid)));
     }

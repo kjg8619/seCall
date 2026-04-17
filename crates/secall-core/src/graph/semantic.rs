@@ -752,9 +752,6 @@ Added tokio and hyper dependencies. Created src/server.rs with async handler."#;
 
         // 최소한 LLM이 tech/topic 엣지를 하나 이상 추출했거나
         // 아니면 규칙 기반만으로도 0 이상이어야 함
-        assert!(
-            stored == 0 || stored > 0,
-            "stored should be non-negative (tautology, just verify no panic)"
-        );
+        let _ = stored; // tautology check 제거 — panic 없이 여기 도달하면 성공
     }
 }

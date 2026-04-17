@@ -63,10 +63,8 @@ pub async fn run(
         Some(GraphFilter::Topic(t))
     } else if let Some(f) = file {
         Some(GraphFilter::File(f))
-    } else if let Some(i) = issue {
-        Some(GraphFilter::Issue(i))
     } else {
-        None
+        issue.map(GraphFilter::Issue)
     };
 
     let filters = SearchFilters {

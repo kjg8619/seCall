@@ -122,7 +122,7 @@ pub async fn run_update(
         for (proj_name, proj_sessions) in &by_project {
             let session_ids: Vec<String> = proj_sessions.iter().map(|s| s.id.clone()).collect();
             let vault_paths = collect_vault_paths(&db, &session_ids);
-            let proj_prompt = build_haiku_single_project_prompt(&db, proj_name, &proj_sessions)?;
+            let proj_prompt = build_haiku_single_project_prompt(&db, proj_name, proj_sessions)?;
 
             eprintln!("  Generating wiki for project: {}...", proj_name);
             let output = backend_box.generate(&proj_prompt).await?;

@@ -259,7 +259,7 @@ impl Database {
         if seed_session_ids.is_empty() || limit == 0 {
             return Ok(vec![]);
         }
-        let max_hops = max_hops.min(3).max(1);
+        let max_hops = max_hops.clamp(1, 3);
 
         // graph_nodes 테이블이 없으면 빈 결과 반환
         let table_exists: i64 = self.conn().query_row(
