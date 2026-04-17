@@ -49,7 +49,7 @@ pub async fn run(all: bool, batch_size: Option<usize>, concurrency: usize) -> Re
     let total_chunks = Arc::new(AtomicUsize::new(0));
     let start = Instant::now();
 
-    stream::iter(session_ids.into_iter())
+    stream::iter(session_ids)
         .map(|sid| {
             let indexer = Arc::clone(&indexer);
             let db_path = Arc::clone(&db_path);
